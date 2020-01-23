@@ -152,6 +152,34 @@ cmd_shell(int nargs, char **args)
 }
 
 /*
+ * Command for setting debug flags. 
+ */
+static
+int
+cmd_df(int nargs, char **args)
+{	
+	int nr = atoi(args[1]);	  	// number between 1 and 12
+	char *req_status = args[2]; 	// on or off
+	
+	if ( nargs != 3 || nr <= 0 || nr > 12 || !( !strcmp(req_status, "on") || !strcmp(req_status, "off") ) ) {
+		kprintf("Usage: df nr on/off\n");
+		return EINVAL;
+	}
+	
+	/* Manipulating the dbflags bit vector */
+	int current_status = ( 1 << (nr - 1) ) & dbflags;
+	
+	if( !strcmp(req_status, "off") && current_status ) {
+		dbflags = dbflags - ( 1 << (nr - 1) );	
+	}
+	else if( !strcmp(req_status, "on") && !current_status ) {
+		dbflags = dbflags + ( 1 << (nr - 1) );
+	}
+	
+	return 0;
+}
+
+/*
  * Command for changing directory.
  */
 static
@@ -377,12 +405,42 @@ showmenu(const char *name, const char *x[])
 	kprintf("\n");
 }
 
+static const char *dbflagsmenu[] = {
+	"[df 1 on/off]	   DB_LOCORE        ",
+	"[df 2 on/off]	   DB_SYSCALL       ",
+	"[df 3 on/off]	   DB_INTERRUPT     ",
+	"[df 4 on/off]	   DB_DEVICE        ",
+	"[df 5 on/off]	   DB_THREADS       ",
+	"[df 6 on/off]	   DB_VM            ",
+	"[df 7 on/off]	   DB_EXEC          ",
+	"[df 8 on/off]	   DB_VFS           ",
+	"[df 9 on/off]	   DB_SFS           ",
+	"[df 10 on/off]	   DB_NET           ",
+	"[df 11 on/off]	   DB_NETFS         ",
+	"[df 12 on/off]	   DB_KMALLOC       ",
+	NULL
+};
+
+static
+int
+cmd_dbflagsmenu(int n, char **a)
+{
+	(void)n;
+	(void)a;
+	
+	showmenu("OS/161 Debug flags", dbflagsmenu);
+	kprintf("Current value of dbflags is 0x%x\n", dbflags);
+	
+	return 0;
+}
+
 static const char *opsmenu[] = {
 	"[s]       Shell                     ",
 	"[p]       Other program             ",
+	"[dbflags] Debug flags               ",
 	"[mount]   Mount a filesystem        ",
 	"[unmount] Unmount a filesystem      ",
-	"[bootfs]  Set \"boot\" filesystem     ",
+	"[bootfs]  Set \"boot\" filesystem   ",
 	"[pf]      Print a file              ",
 	"[cd]      Change directory          ",
 	"[pwd]     Print current directory   ",
@@ -481,10 +539,12 @@ static struct {
 	{ "help",	cmd_mainmenu },
 	{ "?o",		cmd_opsmenu },
 	{ "?t",		cmd_testmenu },
+	{ "dbflags",cmd_dbflagsmenu},
 
 	/* operations */
 	{ "s",		cmd_shell },
 	{ "p",		cmd_prog },
+	{ "df",		cmd_df },
 	{ "mount",	cmd_mount },
 	{ "unmount",	cmd_unmount },
 	{ "bootfs",	cmd_bootfs },

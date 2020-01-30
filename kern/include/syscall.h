@@ -7,11 +7,11 @@
 
 int sys_reboot(int code);
 
-int sys_write(int filehandle, const void *buf, size_t size);
-
-int sys_read(int filehandle, void *buf, size_t size);
-
-unsigned int sys_sleep(unsigned int seconds);
+//int sys_write(int filehandle, const void *buf, size_t size);
+//
+//int sys_read(int filehandle, void *buf, size_t size);
+//
+//unsigned int sys_sleep(unsigned int seconds);
 
 //int open(const char *filename, int flags, ...);
 //int read(int filehandle, void *buf, size_t size);

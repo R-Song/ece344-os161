@@ -69,11 +69,11 @@ mips_syscall(struct trapframe *tf)
 
 	switch (callno) {
 	    case SYS_reboot:
-			err = sys_reboot(tf->tf_a0);
+		err = sys_reboot(tf->tf_a0);
 		break;
 
 	    /* Add stuff here */
-		
+ 
 	    default:
 		kprintf("Unknown syscall %d\n", callno);
 		err = ENOSYS;
@@ -120,14 +120,13 @@ md_forkentry(struct trapframe *tf)
 	(void)tf;
 }
 
-int
-sys_write(int filehandle, const void *buf, size_t size)
-{
-	(void) filehandle;
-	(void) size;
-	kprintf(buf);
-	return 0;
-}
+//int
+//sys_write(int filehandle, const void *buf, size_t size)
+//{
+//	(void) filehandle;
+//	(void) size;
+//	kprintf(*)
+//}
 
 //int
 //kprintf(const char *fmt, ...)

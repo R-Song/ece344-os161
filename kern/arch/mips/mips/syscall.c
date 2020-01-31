@@ -81,6 +81,18 @@ mips_syscall(struct trapframe *tf)
 			err = sys_write( (int)tf->tf_a0, (const void *)tf->tf_a1, (size_t)tf->tf_a2, &retval );
 		break;
 
+		case SYS_read:
+			err = sys_read( (int)tf->tf_a0, (void *)tf->tf_a1, (size_t)tf->tf_a2, &retval  );
+		break;
+
+		case SYS_sleep:
+			err = ENOSYS;
+		break;
+
+		case SYS___time:
+			err = ENOSYS;
+		break
+
 	    default:
 			kprintf("Unknown syscall %d\n", callno);
 			err = ENOSYS;
@@ -127,6 +139,7 @@ md_forkentry(struct trapframe *tf)
 	(void)tf;
 }
 
+
 /*
  * System call for write.
  * Takes file descriptor, user mode buffer, and requested number of bytes as inputs
@@ -144,9 +157,10 @@ sys_write(int fd, const void *buf, size_t nbytes, int *retval)
 	if(err)
 	{
 		*retval = -1;
+		kfree(kbuf);
 		return EFAULT;
 	}
-	kbuf[nbytes] = '\0';
+	kbuf[nbytes] = '\0'; // pad with NULL character
 
 	/* Check file descriptor, only handles stdout and stderr */
 	switch (fd) 
@@ -176,7 +190,65 @@ sys_write(int fd, const void *buf, size_t nbytes, int *retval)
 	return 0;
 }
 
+
 /*
  * System call for read.
- * 
+ * Calls kgets_sys_read which is located in kgets.c
+ * System calls takes file descriptor, max buffer length, and return value pointer as arguments
+ * Returns 0 if success and appropriate error code if error occurs. Retval variable returns -1 if failed, and the length of the read if successful
  */
+int sys_read(int fd, void *buf, size_t buflen, int *retval)
+{
+	/* Allocate Kernel memory to store input from console */
+	char *kbuf = (char *)kmalloc( (buflen+1)*sizeof(char) );
+	int kbuflen = buflen + 1;
+
+	/* Currently only handles read from standard input, can expand switch statement later on to accomodate more */
+	switch( fd ) 
+	{
+		case STDIN_FILENO:
+			kgets_sys_read(kbuf, kbuflen);
+		break;
+
+		default:
+			kfree(kbuf);
+			*retval = -1; // read has failed
+			return EBADF;
+		break;
+	}
+
+	/* Attempt to copy from kernel buffer to user buffer */
+	int err = copyout( kbuf, buf, buflen );
+	if(err) 
+	{
+		kfree(kbuf);
+		*retval = -1; // read has failed
+		return EFAULT;
+	}
+
+	/* Copy was successful, return the length of string read */
+	int length = strlen(kbuf);
+	kfree(kbuf);
+	*retval = length;
+	return 0;
+}
+
+
+/*
+ * System call for sleep.
+ */
+unsigned int sys_sleep(unsigned int seconds)
+{
+	return 0;
+}
+
+
+/* 
+ * System call for __time
+ */
+time_t sys___time(time_t *seconds, unsigned long *nanoseconds)
+{
+	return 0;
+}
+
+

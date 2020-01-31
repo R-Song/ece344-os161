@@ -143,7 +143,9 @@ void beep(void);
 int kprintf(const char *fmt, ...) __PF(1,2);
 void panic(const char *fmt, ...) __PF(1,2);
 
+void backsp(void);
 void kgets(char *buf, size_t maxbuflen);
+void kgets_sys_read(char *kbuf, int buflen);
 
 void kprintf_bootstrap(void);
 

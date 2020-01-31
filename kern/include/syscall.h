@@ -9,16 +9,10 @@ int sys_reboot(int code);
 
 int sys_write(int fd, const void *buf, size_t nbytes, int *retval);
 
-int sys_read(int filehandle, void *buf, size_t size);
+int sys_read(int fd, void *buf, size_t buflen, int *retval);
 
 unsigned int sys_sleep(unsigned int seconds);
 
-//int open(const char *filename, int flags, ...);
-//int read(int filehandle, void *buf, size_t size);
-//int write(int filehandle, const void *buf, size_t size);
-//int close(int filehandle);
-//int reboot(int code);
-//int sync(void);
-//unsigned int sleep(unsigned int seconds);
+time_t sys___time(time_t *seconds, unsigned long *nanoseconds);
 
 #endif /* _SYSCALL_H_ */

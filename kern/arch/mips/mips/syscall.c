@@ -1,5 +1,6 @@
 #include <types.h>
 #include <kern/errno.h>
+#include <kern/unistd.h>
 #include <lib.h>
 #include <machine/pcb.h>
 #include <machine/spl.h>
@@ -69,14 +70,20 @@ mips_syscall(struct trapframe *tf)
 
 	switch (callno) {
 	    case SYS_reboot:
-		err = sys_reboot(tf->tf_a0);
+			err = sys_reboot(tf->tf_a0);
+		break;
+	    /* Add stuff here */
+		case SYS__exit:
+			
 		break;
 
-	    /* Add stuff here */
- 
+		case SYS_write:
+			err = sys_write( (int)tf->tf_a0, (const void *)tf->tf_a1, (size_t)tf->tf_a2, &retval );
+		break;
+
 	    default:
-		kprintf("Unknown syscall %d\n", callno);
-		err = ENOSYS;
+			kprintf("Unknown syscall %d\n", callno);
+			err = ENOSYS;
 		break;
 	}
 
@@ -120,31 +127,56 @@ md_forkentry(struct trapframe *tf)
 	(void)tf;
 }
 
-//int
-//sys_write(int filehandle, const void *buf, size_t size)
-//{
-//	(void) filehandle;
-//	(void) size;
-//	kprintf(*)
-//}
+/*
+ * System call for write.
+ * Takes file descriptor, user mode buffer, and requested number of bytes as inputs
+ * Returns err number. Returns the number of bytes written to retval. If write fails, return -1 through retval
+ */
+int
+sys_write(int fd, const void *buf, size_t nbytes, int *retval)
+{	
+	/* 
+	 * Allocate kernel memory and attempt to copy user buffer to kernel buffer
+	 * Note, the buffer may not be null terminated, therefore we need to append a null character
+	 */
+	char *kbuf = (char *)kmalloc( (nbytes+1) * sizeof(char) );
+	int err = copyin(buf, kbuf, nbytes);
+	if(err)
+	{
+		*retval = -1;
+		return EFAULT;
+	}
+	kbuf[nbytes] = '\0';
 
-//int
-//kprintf(const char *fmt, ...)
-//{
-//	int chars;
-//	va_list ap;
-//
-//	if (kprintf_lock != NULL && !in_interrupt && curspl==0) {
-//		lock_acquire(kprintf_lock);
-//	}
-//
-//	va_start(ap, fmt);
-//	chars = __vprintf(console_send, NULL, fmt, ap);
-//	va_end(ap);
-//
-//	if (kprintf_lock != NULL && !in_interrupt && curspl==0) {
-//		lock_release(kprintf_lock);
-//	}
-//
-//	return chars;
-//}
+	/* Check file descriptor, only handles stdout and stderr */
+	switch (fd) 
+	{
+		case STDOUT_FILENO:
+			*retval = kprintf("%s", kbuf);
+			kfree(kbuf);
+			return 0;
+		break;
+
+		case STDERR_FILENO:
+			/* How to distinguish stdout from stderr??? */
+			*retval = kprintf("%s", kbuf);
+			kfree(kbuf);
+			return 0;
+		break;
+		
+		default:
+			/* Neither stdout or stderr, cannot handle this */
+			*retval = -1;
+			kfree(kbuf);
+			return EBADF;
+		break;
+	}
+
+	/* Should not reach here */
+	return 0;
+}
+
+/*
+ * System call for read.
+ * 
+ */

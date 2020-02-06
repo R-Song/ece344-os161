@@ -13,6 +13,6 @@ int sys_read(int fd, void *buf, size_t buflen, int *retval);
 
 unsigned int sys_sleep(unsigned int seconds);
 
-time_t sys___time(time_t *seconds, unsigned long *nanoseconds);
+time_t sys___time(time_t *seconds, unsigned long *nanoseconds, int *retval);
 
 #endif /* _SYSCALL_H_ */

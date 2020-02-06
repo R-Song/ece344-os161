@@ -7,6 +7,7 @@
 #include <machine/trapframe.h>
 #include <kern/callno.h>
 #include <syscall.h>
+#include <clock.h>
 
 
 /*
@@ -82,16 +83,16 @@ mips_syscall(struct trapframe *tf)
 		break;
 
 		case SYS_read:
-			err = sys_read( (int)tf->tf_a0, (void *)tf->tf_a1, (size_t)tf->tf_a2, &retval  );
+			err = sys_read( (int)tf->tf_a0, (void *)tf->tf_a1, (size_t)tf->tf_a2, &retval );
 		break;
 
 		case SYS_sleep:
-			err = ENOSYS;
+			err = sys_sleep( (unsigned int)tf->tf_a0 );
 		break;
 
 		case SYS___time:
-			err = ENOSYS;
-		break
+			err = sys___time( (time_t *)tf->tf_a0, (unsigned long *)tf->tf_a1, &retval );
+		break;
 
 	    default:
 			kprintf("Unknown syscall %d\n", callno);
@@ -239,15 +240,66 @@ int sys_read(int fd, void *buf, size_t buflen, int *retval)
  */
 unsigned int sys_sleep(unsigned int seconds)
 {
-	return 0;
+    clocksleep(seconds);
+    
+    return 0;
 }
 
 
 /* 
  * System call for __time
  */
-time_t sys___time(time_t *seconds, unsigned long *nanoseconds)
-{
+time_t sys___time(time_t *seconds, unsigned long *nanoseconds, int *retval)
+{ 
+    time_t k_dest_sec;
+    unsigned long k_dest_nanosec;
+    
+    time_t sec;
+    unsigned long nanosec;
+    
+    int err_sec = copyin((const_userptr_t)seconds, &k_dest_sec, sizeof(seconds));
+    int err_nanosec = copyin((const_userptr_t)nanoseconds, &k_dest_nanosec, sizeof(seconds));
+
+    if( (seconds != NULL && err_sec) || (nanoseconds != NULL && err_nanosec) )
+    {
+        *retval = -1;
+        return EFAULT;
+    }
+    
+    if( seconds == NULL )
+    {
+        if(nanoseconds == NULL)
+        {
+            gettime(&sec, (u_int32_t *)&nanosec);
+            *retval = (int32_t)sec;    
+        }
+        else
+        {
+            gettime(&sec, (u_int32_t *)nanoseconds);
+            *retval = (int32_t)sec;
+        }
+    
+    }
+    else if( nanoseconds == NULL)
+    {   
+        if( seconds == NULL )
+        {
+            gettime(&sec, (u_int32_t *)&nanosec);
+            *retval = (int32_t)sec;
+        }
+        else
+        {
+            gettime(seconds, (u_int32_t *)&nanosec);
+            *retval = (int32_t)*seconds;     
+        }
+   
+    }
+    else {
+        gettime(seconds, (u_int32_t *)nanoseconds);
+        *retval = (int32_t)*seconds;
+    }
+
+    
 	return 0;
 }
 

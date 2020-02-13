@@ -299,7 +299,6 @@ time_t sys___time(time_t *seconds, unsigned long *nanoseconds, int *retval)
         *retval = (int32_t)*seconds;
     }
 
-    
 	return 0;
 }
 

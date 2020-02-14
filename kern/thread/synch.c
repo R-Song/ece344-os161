@@ -9,6 +9,7 @@
 #include <thread.h>
 #include <curthread.h>
 #include <machine/spl.h>
+#include <array.h>
 
 ////////////////////////////////////////////////////////////
 //
@@ -116,6 +117,7 @@ lock_create(const char *name)
 	
 	/* Initialize lock, ensure no one holds it */
 	lock->held = 0;
+	lock->owner = NULL;
 	assert(lock->owner == NULL);
 	return lock;
 }
@@ -221,17 +223,19 @@ cv_create(const char *name)
 		return NULL;
 	}
 	
-	// add stuff here as needed
-	
 	return cv;
 }
 
 void
 cv_destroy(struct cv *cv)
 {
+	int spl;
 	assert(cv != NULL);
-
-	// add stuff here as needed
+	
+	/* Disable interrupts, ensure no thread is waiting on the CV */
+	spl = splhigh();
+	assert(thread_hassleepers(cv)==0);
+	splx(spl);	
 	
 	kfree(cv->name);
 	kfree(cv);
@@ -240,23 +244,42 @@ cv_destroy(struct cv *cv)
 void
 cv_wait(struct cv *cv, struct lock *lock)
 {
-	// Write this
-	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+	int spl;
+	assert(cv != NULL);
+	assert(lock != NULL);
+
+	/* Disable interrupts, Release lock, sleep on cv, reaquire lock upon waking up */
+	lock_release(lock);
+	spl = splhigh();
+	thread_sleep(cv);
+	lock_acquire(lock);
+	splx(spl);
 }
 
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
-	// Write this
-	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+	int spl;
+	assert(cv != NULL);
+	assert(lock != NULL);
+	/* Disable interrupts, acquire the lock, wake up one thread sleeping on cv, release lock */
+	spl = splhigh();
+	lock_acquire(lock);
+	thread_wakeup_one(cv);
+	lock_release(lock);
+	splx(spl);
 }
 
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
-	// Write this
-	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+	int spl;
+	assert(cv != NULL);
+	assert(lock != NULL);
+	/* Disable interrupts, acquire the lock, wake up all threads sleeping on cv, release lock */
+	spl = splhigh();
+	lock_acquire(lock);
+	thread_wakeup(cv);
+	lock_release(lock);
+	splx(spl);
 }

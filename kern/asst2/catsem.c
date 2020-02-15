@@ -16,6 +16,7 @@
 #include <lib.h>
 #include <test.h>
 #include <thread.h>
+#include <synch.h>
 #include "catmouse.h"
 
 /*
@@ -23,6 +24,18 @@
  * Function Definitions
  * 
  */
+
+/* States of bowls */
+#define NONE 0
+#define CAT 1
+#define MOUSE 2 
+/* Keep track of bowls */
+int bowl[NFOODBOWLS];
+/* Keep a watch on who modifies the bowl statuses */
+struct semaphore *status_sem;
+/* Use this semaphore to keep track of when all threads are done */
+struct sempahore *thread_sem;
+
 
 /*
  * catsem()
@@ -39,19 +52,44 @@
  *
  */
 
-static
-void
-catsem(void * unusedpointer, 
-       unsigned long catnumber)
-{
-        /*
-         * Avoid unused variable warnings.
-         */
+static void
+catsem(void *unusedpointer, unsigned long catnumber)
+{	
+	int iteration_num = 0;
+	int i;
+	(void) unusedpointer;
 
-        (void) unusedpointer;
-        (void) catnumber;
+	while(iteration_num < NMEALS) {
+		P(status_sem);
+		/* Check if there are any mice, if yes do nothing */
+		for(i=0; i<NFOODBOWLS; i++) {
+			if(bowl[i] == MOUSE) {
+				goto finished;
+			}
+		}
+		/* Check if any bowls are open */
+		for(i=0; i<NFOODBOWLS; i++) {
+			if(bowl[i] == NONE) {
+				bowl[i] = CAT;
+				goto eat;
+			}
+		}
+		goto finished; /* No bowls available to eat... */
+
+		eat:
+			V(status_sem);
+			catmouse_eat("cat", catnumber, i+1, iteration_num);
+			P(status_sem);
+			bowl[i] = NONE;
+			iteration_num++;
+
+		finished:
+			V(status_sem);
+	}
+	/* This thread is done, tell the main function this */
+	V((struct semaphore *)thread_sem);
 }
-        
+      
 
 /*
  * mousesem()
@@ -69,17 +107,42 @@ catsem(void * unusedpointer,
  *
  */
 
-static
-void
-mousesem(void * unusedpointer, 
-         unsigned long mousenumber)
+static void
+mousesem(void *unusedpointer, unsigned long mousenumber)
 {
-        /*
-         * Avoid unused variable warnings.
-         */
+	int iteration_num = 0;
+	int i;
+	(void) unusedpointer;
 
-        (void) unusedpointer;
-        (void) mousenumber;
+	while(iteration_num < NMEALS) {
+		P(status_sem);
+		/* Check if there are any cats, if yes do nothing */
+		for(i=0; i<NFOODBOWLS; i++) {
+			if(bowl[i] == CAT) {
+				goto finished;
+			}
+		}
+		/* Check if any bowls are open */
+		for(i=0; i<NFOODBOWLS; i++) {
+			if(bowl[i] == NONE) {
+				bowl[i] = MOUSE;
+				goto eat;
+			}
+		}
+		goto finished; /* No bowls available to eat... */
+
+		eat:
+			V(status_sem);
+			catmouse_eat("mouse", mousenumber, i+1, iteration_num);
+			P(status_sem);
+			bowl[i] = NONE;
+			iteration_num++;
+
+		finished:
+			V(status_sem);
+	}
+	/* This thread is done, tell the main function this */
+	V((struct semaphore *)thread_sem);
 }
 
 
@@ -99,72 +162,59 @@ mousesem(void * unusedpointer,
  */
 
 int
-catmousesem(int nargs,
-            char ** args)
+catmousesem(int nargs, char ** args)
 {
-        int index, error;
-   
-        /*
-         * Start NCATS catsem() threads.
-         */
+	int index, error;
 
-        for (index = 0; index < NCATS; index++) {
-           
-                error = thread_fork("catsem Thread", 
-                                    NULL, 
-                                    index, 
-                                    catsem, 
-                                    NULL
-                                    );
-                
-                /*
-                 * panic() on error.
-                 */
+	/* Describes the state of the bowls */
+	int i;
+	for(i=0; i<NFOODBOWLS; i++) {
+		bowl[NFOODBOWLS] = NONE;
+	}
+	/* Makes sure only one thread makes a decision at any one time */
+	(struct semaphore *)thread_sem = (struct semaphore *)sem_create("ThreadSem", 0);
+	(struct semaphore *)status_sem = (struct semaphore *)sem_create("StatusSem", 1); 
 
-                if (error) {
-                 
-                        panic("catsem: thread_fork failed: %s\n", 
-                              strerror(error)
-                              );
-                }
-        }
-        
-        /*
-         * Start NMICE mousesem() threads.
-         */
+	/* Start NCATS catsem() threads */
+	for (index = 0; index < NCATS; index++) {
+		error = thread_fork("catsem Thread", NULL, index, catsem, NULL); 
+		/* panic() on error */
+		if (error) {    
+			panic("catsem: thread_fork failed: %s\n", 
+				strerror(error)
+			);
+		}
+	}
+	
+	/* Start NMICE mousesem() threads */
+	for (index = 0; index < NMICE; index++) {
+		error = thread_fork("mousesem Thread", NULL, index, mousesem, NULL);
+		/* panic() on error */
+		if (error) {
+			panic("mousesem: thread_fork failed: %s\n", 
+				strerror(error)
+			);
+		}
+	}
 
-        for (index = 0; index < NMICE; index++) {
-   
-                error = thread_fork("mousesem Thread", 
-                                    NULL, 
-                                    index, 
-                                    mousesem, 
-                                    NULL
-                                    );
-                
-                /*
-                 * panic() on error.
-                 */
+	/* wait until all other threads finish */
+	while (thread_count() > 1)
+			thread_yield();
 
-                if (error) {
-         
-                        panic("mousesem: thread_fork failed: %s\n", 
-                              strerror(error)
-                              );
-                }
-        }
+	(void)nargs;
+	(void)args;
+	kprintf("catsem test done\n");
 
-        /*
-         * wait until all other threads finish
-         */
+	/* Stall until all threads are done running */
+	for(i=0; i<(NMICE + NCATS); i++) {
+		P((struct semaphore *)thread_sem);
+	}
 
-        while (thread_count() > 1)
-                thread_yield();
+	/* Destroy semaphores */
+	sem_destroy((struct semaphore *)thread_sem);
+	sem_destroy((struct semaphore *)status_sem);
 
-        (void)nargs;
-        (void)args;
-        kprintf("catsem test done\n");
 
-        return 0;
+	return 0;
 }
 

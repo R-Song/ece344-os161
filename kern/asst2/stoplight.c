@@ -11,18 +11,17 @@
  * Includes
  *
  */
-
 #include <types.h>
 #include <lib.h>
 #include <test.h>
 #include <thread.h>
 #include <synch.h>
+#include <queue.h>
 
 
 /*
  * Number of cars created.
  */
-
 #define NCARS 20
 
 /*
@@ -30,7 +29,6 @@
  * Function Definitions
  *
  */
-
 static const char *directions[] = { "N", "E", "S", "W" };
 
 static const char *msgs[] = {
@@ -64,14 +62,182 @@ message(int msg_nr, int carnumber, int cardirection, int destdirection)
 
 /* Lock for printing messages to the screen */
 struct lock *msg_lock;
-/* Lock for changing acquire and release of other locks. This prevents deadlocks... */
+/* Lock for modifying quadrant_lock_arr */
 struct lock *mod_lock;
-/* Locks for each of the quadrants */
-struct lock *nw_lock;
-struct lock *ne_lock;
-struct lock *sw_lock;
-struct lock *se_lock;
+/* Locks for each of the quadrants, acquire before turning */
+struct lock *quadrant_lock_arr[2][2];
+/* Lock for changing the state of traffic queues */
+struct lock *queue_lock_arr[4];
 
+/*
+ * Traffic queues
+ */
+struct queue *cardir_queue_arr[4];
+
+
+/*
+ * get_dest()
+ * Returns the destination direction based off of car direction and car turn
+ */
+
+static int
+get_dest(unsigned long cardirection, unsigned long carturn)
+{
+	unsigned long destdirection;
+	switch(carturn) 
+	{
+		case STRAIGHT:
+			switch(cardirection) {
+				case N:
+					destdirection = S;
+					break;
+				case E:
+					destdirection = W;
+					break;
+				case S:
+					destdirection = N;
+					break;
+				case W:
+					destdirection = E;
+					break;
+				default:
+					assert(cardirection < 4 ); /* if reaches this point, something is wrong */
+			}
+			break;
+
+		case LEFT:
+			switch(cardirection) {
+				case N:
+					destdirection = E;
+					break;
+				case E:
+					destdirection = S;
+					break;
+				case S:
+					destdirection = W;
+					break;
+				case W:
+					destdirection = N;
+					break;
+				default:
+					assert(cardirection < 4 );
+			}
+			break;
+
+		case RIGHT:
+			switch(cardirection) {
+				case N:
+					destdirection = W;
+					break;
+				case E:
+					destdirection = N;
+					break;
+				case S:
+					destdirection = E;
+					break;
+				case W:
+					destdirection = S;
+					break;
+				default:
+					assert(cardirection < 4 );
+			}
+			break;
+
+		default:
+			assert(carturn < 3);
+	}
+	return destdirection;
+}
+
+/*
+ * get_quadrants()
+ * Pass in 2x2 array representing the quadrants of the intersection, intialized all at 0;
+ * Depending on the cardirection and destdirection, the neccessary quadrants will be assigned value 1.
+ */
+static void
+get_quadrants(int quadrants[2][2], unsigned long cardirection, unsigned long carturn)
+{
+	switch(cardirection) {
+		case N:
+			switch(carturn) {
+				case STRAIGHT:
+					quadrants[0][0] = 1;
+					quadrants[1][0] = 1;
+					break;
+				case RIGHT:
+					quadrants[0][0] = 1;
+					break;
+				case LEFT:
+					quadrants[0][0] = 1;
+					quadrants[1][0] = 1;
+					quadrants[1][1] = 1;
+					break;
+				default:
+					assert(carturn < 3); // should not ever reach here
+			}		
+			break;
+
+		case E:
+			switch(carturn) {
+				case STRAIGHT:
+					quadrants[0][1] = 1;
+					quadrants[0][0] = 1;
+					break;
+				case RIGHT:
+					quadrants[0][1] = 1;
+					break;
+				case LEFT:
+					quadrants[0][1] = 1;
+					quadrants[0][0] = 1;
+					quadrants[1][0] = 1;
+					break;
+				default:
+					assert(carturn < 3);
+			}		
+			break;
+
+		case S:
+			switch(carturn) {
+				case STRAIGHT:
+					quadrants[1][1] = 1;
+					quadrants[0][1] = 1;
+					break;
+				case RIGHT:
+					quadrants[1][1] = 1;
+					break;
+				case LEFT:
+					quadrants[1][1] = 1;
+					quadrants[0][1] = 1;
+					quadrants[0][0] = 1;
+					break;
+				default:
+					assert(carturn < 3);
+			}
+			break;
+
+		case W:
+			switch(carturn) {
+				case STRAIGHT:
+					quadrants[1][0] = 1;
+					quadrants[1][1] = 1;
+					break;
+				case RIGHT:
+					quadrants[1][0] = 1;
+					break;
+				case LEFT:
+					quadrants[1][0] = 1;
+					quadrants[1][1] = 1;
+					quadrants[0][1] = 1;
+					break;
+				default:
+					assert(carturn < 3);
+			}
+			break;
+
+		default:
+			assert(cardirection < 4); // should never reach here
+	}
+}
 
 /*
  * gostraight()
@@ -93,33 +259,14 @@ struct lock *se_lock;
 static void
 gostraight(unsigned long cardirection, unsigned long carnumber)
 {
-	lock_acquire(msg_lock);
+	//lock_acquire(msg_lock);
 
-	int destdirection;
-	switch(cardirection) {
-		case N:
-			destdirection = S;
-			break;
-		case E:
-			destdirection = W;
-			break;
-		case S:
-			destdirection = N;
-			break;
-		case W:
-			destdirection = E;
-			break;
-		default:
-			/* if reaches this point, something is wrong */
-			assert(cardirection < 3 );
-	}
-	
-	message(APPROACHING, carnumber, cardirection, destdirection);
+	int destdirection = get_dest(cardirection, STRAIGHT);
 	message(REGION1, carnumber, cardirection, destdirection);
 	message(REGION2, carnumber, cardirection, destdirection);
 	message(LEAVING, carnumber, cardirection, destdirection);
 
-	lock_release(msg_lock);
+	//lock_release(msg_lock);
 }
 
 
@@ -144,34 +291,15 @@ static
 void
 turnleft(unsigned long cardirection, unsigned long carnumber)
 {
-	lock_acquire(msg_lock);
+	//lock_acquire(msg_lock);
 
-	int destdirection;
-	switch(cardirection) {
-		case N:
-			destdirection = E;
-			break;
-		case E:
-			destdirection = S;
-			break;
-		case S:
-			destdirection = W;
-			break;
-		case W:
-			destdirection = N;
-			break;
-		default:
-			/* if reaches this point, something is wrong */
-			assert(cardirection < 3 );
-	}
-	
-	message(APPROACHING, carnumber, cardirection, destdirection);
+	int destdirection = get_dest(cardirection, LEFT);
 	message(REGION1, carnumber, cardirection, destdirection);
 	message(REGION2, carnumber, cardirection, destdirection);
 	message(REGION3, carnumber, cardirection, destdirection);
 	message(LEAVING, carnumber, cardirection, destdirection);
 
-	lock_release(msg_lock);
+	//lock_release(msg_lock);
 }
 
 
@@ -196,44 +324,13 @@ static
 void
 turnright(unsigned long cardirection, unsigned long carnumber)
 {
-	lock_acquire(msg_lock);
+	//lock_acquire(msg_lock);
 
-	int destdirection;
-	switch(cardirection) {
-		case N:
-			destdirection = W;
-			break;
-		case E:
-			destdirection = S;
-			break;
-		case S:
-			destdirection = E;
-			break;
-		case W:
-			destdirection = N;
-			break;
-		default:
-			/* if reaches this point, something is wrong */
-			assert(cardirection < 3 );
-	}
-	
-	message(APPROACHING, carnumber, cardirection, destdirection);
+	int destdirection = get_dest(cardirection, RIGHT);
 	message(REGION1, carnumber, cardirection, destdirection);
 	message(LEAVING, carnumber, cardirection, destdirection);
 
-	lock_release(msg_lock);
-}
-
-/* 
- * Helper function to approachintersection(). Given a car direction and car turn, 
- * return 1 if the regions locks are available, return 0 if any of them are unavailable
- */
-int is_road_available(int cardirection, int carturn)
-{
-	(void) cardirection;
-	(void) carturn;
-	// use lock_do_i_hold(...) function
-	return 0;
+	//lock_release(msg_lock);
 }
 
 /*
@@ -261,43 +358,99 @@ void
 approachintersection(void * unusedpointer, unsigned long carnumber)
 {
 	(void) unusedpointer;
-	(void) gostraight;
-	(void) turnleft;
-	(void) turnright;
-	(void) is_road_available;
 
 	/* 
 	 * Assigns cardirection and carturn randomly
 	 * refer to the enums for what the integers mean 
 	 */
-	int cardirection = random() % 4;
-	int carturn = random() % 3;
-	int turn_complete = 0;
+	unsigned int cardirection = random() % 4;
+	unsigned int carturn = random() % 3;
 
-	(void) cardirection;
-	(void) carturn;
-	(void) carnumber;
+	/* 
+	 * 2d array to represent the quadrants. 
+	 * Ex. quadrants[0][0] represents nw and quadrants[1][0] represents sw
+	 * Value of 1 means that quadrant is needed for the proposed turn, 0 otherwise 
+	 */
+	int quadrants[2][2] = {{0},{0}};
+	get_quadrants(quadrants, cardirection, carturn);
 
-	while(turn_complete == 0) 
+	/* Acquire the appropriate lock for the queue */
+	lock_acquire(queue_lock_arr[cardirection]);
+	q_addtail(cardir_queue_arr[cardirection], &carnumber);
+	lock_release(queue_lock_arr[cardirection]);
+
+	/* Spin in a while loop until we are first in the queue */
+	while(1)
 	{
+		lock_acquire(queue_lock_arr[cardirection]);
+		int *q_head = q_getguy( cardir_queue_arr[cardirection], q_getstart(cardir_queue_arr[cardirection]) );
+		if(*q_head == (int)carnumber) {
+			lock_release(queue_lock_arr[cardirection]);
+			break;
+		}
+		lock_release(queue_lock_arr[cardirection]);
+	}
+
+	/* first in queue, approach the intersection */
+	int destdirection = get_dest(cardirection, carturn);
+
+	//lock_acquire(msg_lock);
+	message(APPROACHING, carnumber, cardirection, destdirection);
+	//lock_release(msg_lock);
+
+	/* iterators */
+	int i, j;
+	/* loop until all neccessary locks are acquired and turns are made */
+	while(1) 
+	{
+		/* Acquire mod_lock before checking for locks and acquiring them... */
 		lock_acquire(mod_lock);
-		/* Determine which quadrants need to be attained to perform turn */
+		/* Check if all neccessary locks are released, if any are held, jump to red_light label */
+		for(i=0; i<2; i++) {
+			for(j=0; j<2; j++) {
+				if(quadrants[i][j] == 1 && quadrant_lock_arr[i][j]->held == 1) {
+					goto red_light;
+				}
+			}
+		}
+		/* Acquire all neccessary locks */
+		for(i=0; i<2; i++) {
+			for(j=0; j<2; j++) {
+				if(quadrants[i][j] == 1 && quadrant_lock_arr[i][j]->held == 0) {
+					lock_acquire(quadrant_lock_arr[i][j]);
+				}
+			}
+		}
+		lock_release(mod_lock); // don't need this anymore
 
-
+		/* Perform turn */
+		if(carturn == STRAIGHT)
+			gostraight(cardirection, carnumber);
+		else if(carturn == RIGHT)
+			turnright(cardirection, carnumber);
+		else if(carturn == LEFT)
+			turnleft(cardirection, carnumber);
 		
-		
+		/* release locks */
+		lock_acquire(mod_lock);
+		for(i=0; i<2; i++) {
+			for(j=0; j<2; j++) {
+				if(quadrants[i][j] == 1 && lock_do_i_hold(quadrant_lock_arr[i][j])) {
+					lock_release(quadrant_lock_arr[i][j]);
+				}
+			}
+		}
+		lock_release(mod_lock);
 
-		
+		/* pop ourselves off the traffic queue */
+		lock_acquire(queue_lock_arr[cardirection]);
+		q_remhead(cardir_queue_arr[cardirection]);
+		lock_release(queue_lock_arr[cardirection]);
 
-		/* Test to see if the appropriate regions has released locks */
+		/* turncomplete, break */
+		break;
 
-
-
-		/* Acquire the locks and complete turn */
-
-
-		/* Loop back and try again */
-
+		red_light:
 		lock_release(mod_lock);
 	}
 }
@@ -321,28 +474,34 @@ approachintersection(void * unusedpointer, unsigned long carnumber)
 int
 createcars(int nargs, char ** args)
 {	
+	int i, j;
 	/* Create synchronization primitives */
 	(struct lock *)msg_lock = (struct lock *)lock_create("msg_lock");
 	(struct lock *)mod_lock = (struct lock *)lock_create("mod_lock");
-	(struct lock *)nw_lock = (struct lock *)lock_create("nw_lock");
-	(struct lock *)ne_lock = (struct lock *)lock_create("ne_lock");
-	(struct lock *)sw_lock = (struct lock *)lock_create("sw_lock");
-	(struct lock *)se_lock = (struct lock *)lock_create("se_lock");
+	for(i=0; i<2; i++) {
+		for(j=0; j<2; j++) {
+			(struct lock *)quadrant_lock_arr[i][j] = (struct lock *)lock_create("quadrant_lock");
+		}
+	}
+	for(i=0; i<4; i++) {
+		(struct lock *)queue_lock_arr[i] = (struct lock *)lock_create("queue_lock");
+	}
+
+	/* Create traffic queues */
+	for(i=0; i<4; i++) {
+		(struct queue *)cardir_queue_arr[i] = (struct queue *)q_create(NCARS);
+	}
 
 	int index, error;
 
-	/*
-	* Start NCARS approachintersection() threads.
-	*/
+	/* Start NCARS approachintersection() threads */
 	for (index = 0; index < NCARS; index++) {
 		error = thread_fork("approachintersection thread",
 							NULL, index, approachintersection, NULL);
-		/*
-		* panic() on error.
-		*/
+		/* panic() on error */
 		if (error) {         
 			panic("approachintersection: thread_fork failed: %s\n",
-					strerror(error));
+				  strerror(error));
 		}
 	}
 	
@@ -350,14 +509,27 @@ createcars(int nargs, char ** args)
 	while (thread_count() > 1)
 		thread_yield();
 
-	/* destroy locks */
+	/* too lazy to destroy locks and queues properly... */
+	// /* destroy locks */
+	// lock_destroy(msg_lock);
+	// lock_destroy(mod_lock);
+	// lock_destroy(nw_lock);
+	// lock_destroy(ne_lock);
+	// lock_destroy(sw_lock);
+	// lock_destroy(se_lock);
 
+	// /* destroy queues */
+	// q_destroy(n_queue);
+	// q_destroy(e_queue);
+	// q_destroy(s_queue);
+	// q_destroy(w_queue);
 
-	(void)message;
+	/* surpress unused variable warnings */
 	(void)nargs;
 	(void)args;
-	kprintf("stoplight test done\n");
 
+	/* Done */
+	kprintf("stoplight test done\n");
 	return 0;
 }
 

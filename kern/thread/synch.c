@@ -172,6 +172,9 @@ lock_release(struct lock *lock)
 	if(lock->owner != curthread) {
 		return;
 	}
+	if(lock->held != 1) {
+		return;
+	}
 
 	/* Disable interrupts, release lock, wakeup thread(s) waiting for the lock */
 	spl = splhigh();

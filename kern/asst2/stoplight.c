@@ -57,7 +57,7 @@ message(int msg_nr, int carnumber, int cardirection, int destdirection)
 }
 
 /* 
- * Locks and CV
+ * Locks
  */
 
 /* Lock for printing messages to the screen */
@@ -259,14 +259,19 @@ get_quadrants(int quadrants[2][2], unsigned long cardirection, unsigned long car
 static void
 gostraight(unsigned long cardirection, unsigned long carnumber)
 {
-	//lock_acquire(msg_lock);
-
 	int destdirection = get_dest(cardirection, STRAIGHT);
-	message(REGION1, carnumber, cardirection, destdirection);
-	message(REGION2, carnumber, cardirection, destdirection);
-	message(LEAVING, carnumber, cardirection, destdirection);
 
-	//lock_release(msg_lock);
+	lock_acquire(msg_lock);
+	message(REGION1, carnumber, cardirection, destdirection);
+	lock_release(msg_lock);
+
+	lock_acquire(msg_lock);
+	message(REGION2, carnumber, cardirection, destdirection);
+	lock_release(msg_lock);
+
+	lock_acquire(msg_lock);
+	message(LEAVING, carnumber, cardirection, destdirection);
+	lock_release(msg_lock);
 }
 
 
@@ -291,15 +296,23 @@ static
 void
 turnleft(unsigned long cardirection, unsigned long carnumber)
 {
-	//lock_acquire(msg_lock);
-
 	int destdirection = get_dest(cardirection, LEFT);
-	message(REGION1, carnumber, cardirection, destdirection);
-	message(REGION2, carnumber, cardirection, destdirection);
-	message(REGION3, carnumber, cardirection, destdirection);
-	message(LEAVING, carnumber, cardirection, destdirection);
 
-	//lock_release(msg_lock);
+	lock_acquire(msg_lock);
+	message(REGION1, carnumber, cardirection, destdirection);
+	lock_release(msg_lock);
+
+	lock_acquire(msg_lock);
+	message(REGION2, carnumber, cardirection, destdirection);
+	lock_release(msg_lock);
+
+	lock_acquire(msg_lock);
+	message(REGION3, carnumber, cardirection, destdirection);
+	lock_release(msg_lock);
+
+	lock_acquire(msg_lock);
+	message(LEAVING, carnumber, cardirection, destdirection);
+	lock_release(msg_lock);
 }
 
 
@@ -324,13 +337,15 @@ static
 void
 turnright(unsigned long cardirection, unsigned long carnumber)
 {
-	//lock_acquire(msg_lock);
-
 	int destdirection = get_dest(cardirection, RIGHT);
-	message(REGION1, carnumber, cardirection, destdirection);
-	message(LEAVING, carnumber, cardirection, destdirection);
 
-	//lock_release(msg_lock);
+	lock_acquire(msg_lock);
+	message(REGION1, carnumber, cardirection, destdirection);
+	lock_release(msg_lock);
+
+	lock_acquire(msg_lock);
+	message(LEAVING, carnumber, cardirection, destdirection);
+	lock_release(msg_lock);
 }
 
 /*
@@ -394,9 +409,9 @@ approachintersection(void * unusedpointer, unsigned long carnumber)
 	/* first in queue, approach the intersection */
 	int destdirection = get_dest(cardirection, carturn);
 
-	//lock_acquire(msg_lock);
+	lock_acquire(msg_lock);
 	message(APPROACHING, carnumber, cardirection, destdirection);
-	//lock_release(msg_lock);
+	lock_release(msg_lock);
 
 	/* iterators */
 	int i, j;
@@ -431,7 +446,7 @@ approachintersection(void * unusedpointer, unsigned long carnumber)
 		else if(carturn == LEFT)
 			turnleft(cardirection, carnumber);
 		
-		/* release locks */
+		/* release locks, reacquire mod_lock to do so */
 		lock_acquire(mod_lock);
 		for(i=0; i<2; i++) {
 			for(j=0; j<2; j++) {
@@ -509,20 +524,20 @@ createcars(int nargs, char ** args)
 	while (thread_count() > 1)
 		thread_yield();
 
-	/* too lazy to destroy locks and queues properly... */
-	// /* destroy locks */
-	// lock_destroy(msg_lock);
-	// lock_destroy(mod_lock);
-	// lock_destroy(nw_lock);
-	// lock_destroy(ne_lock);
-	// lock_destroy(sw_lock);
-	// lock_destroy(se_lock);
-
-	// /* destroy queues */
-	// q_destroy(n_queue);
-	// q_destroy(e_queue);
-	// q_destroy(s_queue);
-	// q_destroy(w_queue);
+	/* destroy locks */
+	for(i=0; i<2; i++) {
+		for(j=0; j<2; j++)
+			lock_destroy(quadrant_lock_arr[i][j]);
+	}
+	for(i=0; i<4; i++) {
+		lock_destroy(queue_lock_arr[i]);
+	}
+	lock_destroy(msg_lock);
+	lock_destroy(mod_lock);
+	
+	/* destroy queues */
+	for(i=0; i<4; i++)
+		q_destroy(cardir_queue_arr[i]);
 
 	/* surpress unused variable warnings */
 	(void)nargs;

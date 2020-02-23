@@ -169,7 +169,7 @@ catmousesem(int nargs, char ** args)
 	/* Describes the state of the bowls */
 	int i;
 	for(i=0; i<NFOODBOWLS; i++) {
-		bowl[NFOODBOWLS] = NONE;
+		bowl[i] = NONE;
 	}
 	/* Makes sure only one thread makes a decision at any one time */
 	(struct semaphore *)thread_sem = (struct semaphore *)sem_create("ThreadSem", 0);

@@ -17,6 +17,7 @@
 #include <thread.h>
 #include <synch.h>
 #include <queue.h>
+#include <machine/spl.h>
 
 
 /*
@@ -60,8 +61,6 @@ message(int msg_nr, int carnumber, int cardirection, int destdirection)
  * Locks
  */
 
-/* Lock for printing messages to the screen */
-struct lock *msg_lock;
 /* Lock for modifying quadrant_lock_arr */
 struct lock *mod_lock;
 /* Locks for each of the quadrants, acquire before turning */
@@ -259,19 +258,20 @@ get_quadrants(int quadrants[2][2], unsigned long cardirection, unsigned long car
 static void
 gostraight(unsigned long cardirection, unsigned long carnumber)
 {
+	int spl;
 	int destdirection = get_dest(cardirection, STRAIGHT);
 
-	lock_acquire(msg_lock);
+	spl = splhigh();
 	message(REGION1, carnumber, cardirection, destdirection);
-	lock_release(msg_lock);
+	splx(spl);
 
-	lock_acquire(msg_lock);
+	spl = splhigh();
 	message(REGION2, carnumber, cardirection, destdirection);
-	lock_release(msg_lock);
+	splx(spl);
 
-	lock_acquire(msg_lock);
+	spl = splhigh();
 	message(LEAVING, carnumber, cardirection, destdirection);
-	lock_release(msg_lock);
+	splx(spl);
 }
 
 
@@ -296,23 +296,24 @@ static
 void
 turnleft(unsigned long cardirection, unsigned long carnumber)
 {
+	int spl;
 	int destdirection = get_dest(cardirection, LEFT);
 
-	lock_acquire(msg_lock);
+	spl = splhigh();
 	message(REGION1, carnumber, cardirection, destdirection);
-	lock_release(msg_lock);
+	splx(spl);
 
-	lock_acquire(msg_lock);
+	spl = splhigh();
 	message(REGION2, carnumber, cardirection, destdirection);
-	lock_release(msg_lock);
+	splx(spl);
 
-	lock_acquire(msg_lock);
+	spl = splhigh();
 	message(REGION3, carnumber, cardirection, destdirection);
-	lock_release(msg_lock);
+	splx(spl);
 
-	lock_acquire(msg_lock);
+	spl = splhigh();
 	message(LEAVING, carnumber, cardirection, destdirection);
-	lock_release(msg_lock);
+	splx(spl);
 }
 
 
@@ -337,15 +338,16 @@ static
 void
 turnright(unsigned long cardirection, unsigned long carnumber)
 {
+	int spl;
 	int destdirection = get_dest(cardirection, RIGHT);
 
-	lock_acquire(msg_lock);
+	spl = splhigh();
 	message(REGION1, carnumber, cardirection, destdirection);
-	lock_release(msg_lock);
+	splx(spl);
 
-	lock_acquire(msg_lock);
+	spl = splhigh();
 	message(LEAVING, carnumber, cardirection, destdirection);
-	lock_release(msg_lock);
+	splx(spl);
 }
 
 /*
@@ -409,9 +411,9 @@ approachintersection(void * unusedpointer, unsigned long carnumber)
 	/* first in queue, approach the intersection */
 	int destdirection = get_dest(cardirection, carturn);
 
-	lock_acquire(msg_lock);
+	int spl = splhigh();
 	message(APPROACHING, carnumber, cardirection, destdirection);
-	lock_release(msg_lock);
+	splx(spl);
 
 	/* iterators */
 	int i, j;
@@ -491,7 +493,6 @@ createcars(int nargs, char ** args)
 {	
 	int i, j;
 	/* Create synchronization primitives */
-	(struct lock *)msg_lock = (struct lock *)lock_create("msg_lock");
 	(struct lock *)mod_lock = (struct lock *)lock_create("mod_lock");
 	for(i=0; i<2; i++) {
 		for(j=0; j<2; j++) {
@@ -532,7 +533,6 @@ createcars(int nargs, char ** args)
 	for(i=0; i<4; i++) {
 		lock_destroy(queue_lock_arr[i]);
 	}
-	lock_destroy(msg_lock);
 	lock_destroy(mod_lock);
 	
 	/* destroy queues */

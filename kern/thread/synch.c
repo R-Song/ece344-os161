@@ -251,7 +251,7 @@ cv_wait(struct cv *cv, struct lock *lock)
 	assert(cv != NULL);
 	assert(lock != NULL);
 
-	/* Disable interrupts, Release lock, sleep on cv, reaquire lock upon waking up */
+	/* Disable interrupts, Release lock, sleep on cv, reacquire lock upon waking up */
 	lock_release(lock);
 	spl = splhigh();
 	thread_sleep(cv);

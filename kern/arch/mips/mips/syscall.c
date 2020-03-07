@@ -241,7 +241,6 @@ int sys_read(int fd, void *buf, size_t buflen, int *retval)
 unsigned int sys_sleep(unsigned int seconds)
 {
     clocksleep(seconds);
-    
     return 0;
 }
 

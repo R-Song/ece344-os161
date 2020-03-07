@@ -11,6 +11,11 @@ enum uio_rw {
 	UIO_WRITE,
 };
 
+/* 
+ * UIO_USERSPACE is used by user program data
+ * UIO_USERISPACE is used by user program instructions
+ * UIO_SYSSPACE is used by kernel level programs
+ */
 enum uio_seg {
 	UIO_USERSPACE,
 	UIO_SYSSPACE,

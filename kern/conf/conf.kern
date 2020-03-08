@@ -305,6 +305,7 @@ file      lib/kheap.c
 file      lib/kprintf.c
 file      lib/kgets.c
 file      lib/misc.c
+file      lib/hashmap.c
 
 #
 # Standard C functions
@@ -382,6 +383,8 @@ file      main/menu.c
 file      userprog/loadelf.c
 file      userprog/runprogram.c
 file      userprog/uio.c
+file      userprog/syscall_impl.c
+file      userprog/process.c
 
 #
 # Virtual memory system

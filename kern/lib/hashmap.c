@@ -10,11 +10,12 @@
 struct hashmap {
     int size;
     struct h_entry *map; /* array entries */
-}
+};
 
 struct h_entry {
     int key;
     void *data_block;
-    
-}
+    void *previous;
+    void *next;
+};
 

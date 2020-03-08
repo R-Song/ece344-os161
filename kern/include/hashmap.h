@@ -24,9 +24,8 @@ struct h_entry;
 struct hashmap *h_create(int size);
 struct h_entry *h_getentry(int key);
 int             h_keyavail(int key);
-int             h_insert(int key, struct *h_entry);
+int             h_insert(int key, struct h_entry *h_entry);
 int             h_rementry(int key);
-void            h_destroy(struct hashmap *);
-
+void            h_destroy(struct hashmap *hashmap);
 
 #endif /* _HASHMAP_H_ */

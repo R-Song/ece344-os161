@@ -384,7 +384,6 @@ file      userprog/loadelf.c
 file      userprog/runprogram.c
 file      userprog/uio.c
 file      userprog/syscall_impl.c
-file      userprog/process.c
 
 #
 # Virtual memory system

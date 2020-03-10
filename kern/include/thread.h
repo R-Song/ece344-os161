@@ -7,6 +7,7 @@
 
 /* Get machine-dependent stuff */
 #include <machine/pcb.h>
+#include <array.h>
 
 
 struct addrspace;
@@ -16,15 +17,41 @@ struct thread {
 	/* Private thread members - internal to the thread system */
 	/**********************************************************/
 	
+	/* 
+	 * Contains information about 
+	 */
 	struct pcb t_pcb;
 	char *t_name;
 	const void *t_sleepaddr;
 	char *t_stack;
 	
+	
+	/* lab3 code - begin */
+
+	/*
+	 * Each thread is given a pid (including kernel threads)
+	 * Unique PID is generated and used as a key to lookup this struct.
+	 */
+	pid_t pid;
+
+	/* 
+	 * This variable is set to 1 if it is a user process and 0 if it is a kernel thread
+	 */
+	int user_mode;
+
+	/*
+	 * Parent and child processes
+	 */
+	struct thread *parent;			// A process may only have one parent
+	struct array *children; 		// A process may have multiple children
+
+	/* lab3 code - end */
+
+
+
 	/**********************************************************/
 	/* Public thread members - can be used by other code      */
 	/**********************************************************/
-	
 	/*
 	 * This is public because it isn't part of the thread system,
 	 * and will need to be manipulated by the userprog and/or vm

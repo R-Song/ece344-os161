@@ -70,14 +70,8 @@ thread_create(const char *name)
 
 
 	/* lab3 code - begin */
-
-	thread->t_pid = -1;
-	thread->t_ppid = -1;
-	thread->t_exitflag = 0; 
-	thread->t_exitcode = 0;
 	thread->t_exitlock = lock_create("lock for exit...");
 	lock_acquire(thread->t_exitlock);
-
 	/* lab3 code - end */
 
 	splx(spl);

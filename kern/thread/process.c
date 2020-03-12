@@ -126,6 +126,9 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
     /* update child_thread information */
     child_thread->t_pid = child_pid;
     child_thread->t_ppid = curthread->t_pid;
+    child_thread->t_vmspace = child_addrspace;
+	child_thread->t_exitflag = 0; 
+	child_thread->t_exitcode = 0;
 
     /* return */
     *ret_val = child_pid;
@@ -144,15 +147,16 @@ void proc_exit(int exitcode)
     lock_release(curthread->t_exitlock);        // Now others waiting for this pid can continue with their lives
 
     /* Apparently we need to change the status of this processes children... ADOPTION!! */
-    int index;
-    for(index=0; index<MAX_PID; index++) {
-        struct thread *proc = array_getguy(process_table, index);
-        if(proc != NULL) {
-            if(curthread->t_pid == proc->t_ppid) {
-                proc->t_ppid = 1;
-            }
-        }
-    }
+    // int index;
+    // struct thread *child;
+    // for(index=0; index<MAX_PID; index++) {
+    //     child = (struct thread *)array_getguy(process_table, index);
+    //     if(child != NULL) {
+    //         if(curthread->t_pid == child->t_ppid) {
+    //             child->t_ppid = 1;
+    //         }
+    //     }
+    // }
 
     thread_exit();
 }

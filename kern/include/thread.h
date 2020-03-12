@@ -7,19 +7,24 @@
 
 /* Get machine-dependent stuff */
 #include <machine/pcb.h>
-#include <array.h>
+
+/* States a thread can be in. */
+typedef enum {
+	S_RUN,
+	S_READY,
+	S_SLEEP,
+	S_ZOMB,
+} threadstate_t;
 
 
 struct addrspace;
+
 
 struct thread {
 	/**********************************************************/
 	/* Private thread members - internal to the thread system */
 	/**********************************************************/
 	
-	/* 
-	 * Contains information about 
-	 */
 	struct pcb t_pcb;
 	char *t_name;
 	const void *t_sleepaddr;
@@ -28,22 +33,20 @@ struct thread {
 	
 	/* lab3 code - begin */
 
-	/*
-	 * Each thread is given a pid (including kernel threads)
-	 * Unique PID is generated and used as a key to lookup this struct.
-	 */
-	pid_t pid;
-
-	/* 
-	 * This variable is set to 1 if it is a user process and 0 if it is a kernel thread
-	 */
-	int user_mode;
+	/*****************************************/
+	/* These members only apply to processes */
+	/*****************************************/
+	pid_t t_pid;
+	pid_t t_ppid;
 
 	/*
-	 * Parent and child processes
+	 * Exit code of the thread. Use this only if the thread state is ZOMBIE.
+	 * This means that the process has been terminated and is waiting to be reaped.
 	 */
-	struct thread *parent;			// A process may only have one parent
-	struct array *children; 		// A process may have multiple children
+	int t_exitflag;
+	int t_exitcode;
+	/* This lock is critical for the interplay between sys__exit and sys_waitpid. */
+	struct lock *t_exitlock;
 
 	/* lab3 code - end */
 
@@ -104,6 +107,8 @@ int thread_join(struct thread * thread);
  * Interrupts need not be disabled.
  */
 void thread_exit(void);
+
+void thread_destroy(struct thread *thread);
 
 /*
  * Cause the current thread to yield to the next runnable thread, but

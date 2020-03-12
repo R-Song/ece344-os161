@@ -1,6 +1,8 @@
 #ifndef _SYSCALL_H_
 #define _SYSCALL_H_
 
+struct trapframe;
+
 /*
  * Prototypes for IN-KERNEL entry points for system call implementations.
  */
@@ -17,7 +19,7 @@ int sys_sleep(unsigned int seconds);
 int sys___time(time_t *seconds, unsigned long *nanoseconds, time_t *retval);
 
 /* System calls related to processes */
-int sys_fork(pid_t *retval);
+int sys_fork(struct trapframe *tf, pid_t *retval);
 
 int sys_execv(const char *program, char **args, int *retval);
 

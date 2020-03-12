@@ -8,7 +8,9 @@
 #include <kern/callno.h>
 #include <syscall.h>
 #include <clock.h>
-
+#include <addrspace.h>
+#include <curthread.h>
+#include <process.h>
 
 /*
  * System call handler.
@@ -75,7 +77,7 @@ mips_syscall(struct trapframe *tf)
 		break;
 	    /* Add stuff here */
 		case SYS__exit:
-			
+			err = sys__exit( (int)tf->tf_a0 );
 		break;
 
 		case SYS_write:
@@ -92,6 +94,18 @@ mips_syscall(struct trapframe *tf)
 
 		case SYS___time:
 			err = sys___time( (time_t *)tf->tf_a0, (unsigned long *)tf->tf_a1, &retval );
+		break;
+
+		case SYS_fork:
+			err = sys_fork( tf, &retval );
+		break;
+
+		case SYS_getpid:
+			err = sys_getpid(&retval);
+		break;
+
+		case SYS_waitpid:
+			err = sys_waitpid( (int)tf->tf_a0, (int *)tf->tf_a1, (int)tf->tf_a2, &retval );
 		break;
 
 	    default:
@@ -127,15 +141,30 @@ mips_syscall(struct trapframe *tf)
 	assert(curspl==0);
 }
 
+/*
+ * This function is used to start the child process that is created by fork.
+ * The child process is entering user mode for the first time!
+ * 
+ * Similar to md_usermode, create a pseudo trapframe and warm into usermode through that
+ */
 void
-md_forkentry(struct trapframe *tf)
-{
-	/*
-	 * This function is provided as a reminder. You need to write
-	 * both it and the code that calls it.
-	 *
-	 * Thus, you can trash it and do things another way if you prefer.
-	 */
+md_forkentry(void *tf, unsigned long child_addrspace)
+{	
+	/* Load the parent trap frame onto the stack */
+	struct trapframe child_tf = *((struct trapframe *) tf);
+	child_tf.tf_v0 = 0; 			// fork returns 0 to the child
+	child_tf.tf_a3 = 0; 			// signal no error
+	child_tf.tf_epc += 4;			// start after the exception
+	
+	/* free the trapframe, it was allocated back in proc_fork() */
+	kfree(tf);
 
-	(void)tf;
+	/* Change the address space and activate the address space */
+	struct addrspace *next_addrspace = (struct addrspace *)child_addrspace;
+	set_addrspace(next_addrspace);
+
+	/* Enter user mode */
+	mips_usermode(&child_tf);
+
+	panic("md_forkentry failed to enter user mode!!!");
 }

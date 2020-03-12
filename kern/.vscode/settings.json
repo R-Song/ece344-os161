@@ -1,5 +1,6 @@
 {
     "files.associations": {
-        "clock.h": "c"
+        "clock.h": "c",
+        "curthread.h": "c"
     }
 }

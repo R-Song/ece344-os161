@@ -14,6 +14,9 @@
 #include <kern/callno.h>
 #include <clock.h>
 #include <syscall.h>
+#include <thread.h>
+#include <curthread.h>
+#include <process.h>
 
 /*
  * System call for write.
@@ -175,5 +178,70 @@ int sys___time(time_t *seconds, unsigned long *nanoseconds, time_t *retval)
 }
 
 
+/*
+ * System call for fork.
+ * As an input, it takes the entire trapframe from the exception. Using this trapframe, a new thread is created that
+ * has identical states, but different memory space and file tables. 
+ * File handle objects are, however, shared.
+ * 
+ * Returns pid of child process to caller
+ * Returns 0 to child process
+ * 
+ * Exact mechanism for return is to put the value into the return register
+ *  
+ * Possible errors:
+ * 		EAGAIN: Too many processes exist
+ * 		ENOMEM: Not enough virtual memory to accomodate this process
+ */
+int sys_fork(struct trapframe *tf, pid_t *ret_val) 
+{
+	int child_pid;	
 
+	int err = proc_fork(tf, &child_pid);
+	if(err) {
+		*ret_val = -1;
+		return err;
+	}
+
+	*ret_val = child_pid;
+	return 0;
+}
+
+/* Get PID */
+int sys_getpid(pid_t *retval) {
+    *retval = curthread->t_pid;
+    return 0;
+}
+
+/* System call for exit. */ 
+int sys__exit(int exitcode)
+{	
+	proc_exit(exitcode);
+	return 0;
+}
+
+/* System call for wait pid */
+int sys_waitpid(int pid, int *status, int options, int *retval)
+{
+	int exitcode;
+	if( options ){
+		*retval = -1;
+		return EINVAL;	
+	}
+	int err;
+	err = proc_wait(pid, &exitcode);
+	if( err ){
+		*retval = -1;
+		return err;
+	}
+	
+	err = copyout( &exitcode, (userptr_t)status, sizeof(int));
+	if( err ){
+		*retval = -1;
+		return err;
+	}
+	/* if no errors, return the pid */
+	*retval = pid;
+	return 0;
+}
 

@@ -13,23 +13,20 @@
 #include <addrspace.h>
 #include <vnode.h>
 #include "opt-synchprobs.h"
+#include <process.h>
+#include <synch.h>
 
-/* States a thread can be in. */
-typedef enum {
-	S_RUN,
-	S_READY,
-	S_SLEEP,
-	S_ZOMB,
-} threadstate_t;
-
-/* Global variable for the thread currently executing at any given time. */
+/* 
+ * Global variable for the thread currently executing at any given time. 
+ * This is updated before the context switch, so is compatible with user processes.
+ */
 struct thread *curthread;
 
 /* Table of sleeping threads. */
 static struct array *sleepers;
 
 /* List of dead threads to be disposed of. */
-static struct array *zombies;
+struct array *zombies;
 
 /* Total number of outstanding threads. Does not count zombies[]. */
 static int numthreads;
@@ -37,7 +34,6 @@ static int numthreads;
 /*
  * Returns number of active threads
  */
-
 int
 thread_count(void)
 {
@@ -48,11 +44,14 @@ thread_count(void)
  * Create a thread. This is used both to create the first thread's 
  * thread structure and to create subsequent threads.
  */
-
 static
 struct thread *
 thread_create(const char *name)
 {
+	/* Make creation of thread atomic */
+	int spl;
+	spl = splhigh();
+
 	struct thread *thread = kmalloc(sizeof(struct thread));
 	if (thread==NULL) {
 		return NULL;
@@ -68,10 +67,20 @@ thread_create(const char *name)
 	thread->t_vmspace = NULL;
 
 	thread->t_cwd = NULL;
-	
-	// If you add things to the thread structure, be sure to initialize
-	// them here.
-	
+
+
+	/* lab3 code - begin */
+
+	thread->t_pid = -1;
+	thread->t_ppid = -1;
+	thread->t_exitflag = 0; 
+	thread->t_exitcode = 0;
+	thread->t_exitlock = lock_create("lock for exit...");
+	lock_acquire(thread->t_exitlock);
+
+	/* lab3 code - end */
+
+	splx(spl);
 	return thread;
 }
 
@@ -81,19 +90,17 @@ thread_create(const char *name)
  * This function cannot be called in the victim thread's own context.
  * Freeing the stack you're actually using to run would be... inadvisable.
  */
-static
+// previously static
 void
 thread_destroy(struct thread *thread)
 {
 	assert(thread != curthread);
 
-	// If you add things to the thread structure, be sure to dispose of
-	// them here or in thread_exit.
-
-	// These things are cleaned up in thread_exit.
+	/* These things are cleaned up in thread_exit. */
 	assert(thread->t_vmspace==NULL);
 	assert(thread->t_cwd==NULL);
-	
+
+
 	if (thread->t_stack) {
 		kfree(thread->t_stack);
 	}
@@ -191,7 +198,9 @@ thread_bootstrap(void)
 	if (zombies==NULL) {
 		panic("Cannot create zombies array\n");
 	}
-	
+
+	proc_bootstrap();
+
 	/*
 	 * Create the thread structure for the first thread
 	 * (the one that's already running)
@@ -426,6 +435,7 @@ mi_switch(threadstate_t nextstate)
 	 */
 	md_switch(&cur->t_pcb, &next->t_pcb);
 	
+
 	/*
 	 * If we switch to a new thread, we don't come here, so anything
 	 * done here must be in mi_threadstart() as well, or be skippable,

@@ -165,37 +165,37 @@ int proc_wait(int pid, int *exitcode)
     int spl;
     spl = splhigh();
     if( pid > MAX_PID || pid < 1 ){
-        splx(spl);
         *exitcode = 0;
+        splx(spl);
         return EINVAL;
     }
     
     struct thread *current = array_getguy(process_table, pid);
     if ( current == NULL ){
-        splx(spl);
         *exitcode = 0;
+        splx(spl);
         return EINVAL;
     }
     /* Check if waiting only on the pid of the children */
     if( current->t_ppid != curthread->t_pid){
-        splx(spl);
         *exitcode = 0;
+        splx(spl);
         return EINVAL;
     }
 
     if( current->t_exitflag ){
-        splx(spl);
         *exitcode = current->t_exitcode;
+        proc_reap(pid);
+        splx(spl);
         return 0;
     }
     /* Wait on the lock until the child terminates its execution */ 
-    lock_acquire(curthread->t_exitlock);
+    lock_acquire(current->t_exitlock);
     
     /* Call process and thread reaping function */
     *exitcode = current->t_exitcode;
     proc_reap(pid);
     splx(spl);
-
     return 0;
 }
 

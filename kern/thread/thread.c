@@ -68,10 +68,12 @@ thread_create(const char *name)
 
 	thread->t_cwd = NULL;
 
-
 	/* lab3 code - begin */
-	thread->t_exitlock = lock_create("lock for exit...");
-	lock_acquire(thread->t_exitlock);
+	int err = proc_init(thread);
+	if(err) {
+		kfree(thread);
+		return NULL;
+	}
 	/* lab3 code - end */
 
 	splx(spl);

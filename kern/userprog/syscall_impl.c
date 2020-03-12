@@ -17,6 +17,7 @@
 #include <thread.h>
 #include <curthread.h>
 #include <process.h>
+#include <addrspace.h>
 
 /*
  * System call for write.
@@ -196,7 +197,7 @@ int sys___time(time_t *seconds, unsigned long *nanoseconds, time_t *retval)
 int sys_fork(struct trapframe *tf, pid_t *ret_val) 
 {
 	int child_pid;	
-
+	
 	int err = proc_fork(tf, &child_pid);
 	if(err) {
 		*ret_val = -1;

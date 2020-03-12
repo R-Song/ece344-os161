@@ -132,7 +132,7 @@ lock_destroy(struct lock *lock)
 	/* Disable interrupts, ensure no thread is sleeping on/holding the lock */
 	spl = splhigh();
 	assert(thread_hassleepers(lock)==0);
-	assert(lock->owner == NULL);
+	//assert(lock->owner == NULL);
 	splx(spl);	
 	
 	kfree(lock->name);

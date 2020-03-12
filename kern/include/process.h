@@ -5,6 +5,7 @@
 
 struct trapframe;
 struct addrspace;
+struct thread;
 
 /*
  * These functions deal with manipulating the process hashtable table. 
@@ -21,12 +22,16 @@ void proc_bootstrap();
 
 /* Finds an available pid_t and allocates process entry to the process hashtable */
 int proc_addentry(void *t_block, pid_t *retval);
+int proc_pid_avail();
 
 /* 
  * Reap a process by deallocating it entirely from the process hashtable 
  * The actual thread structure is not freed from memory
  */
 void proc_deleteentry(pid_t pid); 
+
+/* Function called in thread_create to initialize process information */
+int proc_init(struct thread *child_thread);
 
 /*
  * Following functions are helpers for the system calls

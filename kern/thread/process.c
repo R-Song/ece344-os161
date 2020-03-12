@@ -20,7 +20,7 @@
 /*************************************************************************************************/
 
 /* constant for max number of threads */
-const int MAX_PID = 32768;
+const int MAX_PID = 256;
 
 /* Global variable holding process lookup table */
 struct array *process_table;
@@ -61,6 +61,20 @@ int proc_addentry(void *t_block, pid_t *retval)
     return EAGAIN;
 }
 
+/* Returns 1 if there is an available PID, 0 otherwise */
+int proc_pid_avail()
+{   
+    /* Find an available PID */
+    /* Index starts at 1 because PID 0 is reserved for swapper or scheduler. PID 1 should be assigned to init. */
+    pid_t index;
+    for( index=1; index<MAX_PID; index++ ) {
+        if(array_getguy(process_table, index) == NULL) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* Delete an entry - Using setguy because we want the value to be NULL. Later we will switch the hashmaps */
 void proc_deleteentry(pid_t pid)
 {
@@ -71,6 +85,36 @@ void proc_deleteentry(pid_t pid)
 void proc_destroy()
 {
     array_destroy(process_table);
+}
+
+/* Initializes the process informaton, this function is called in thread_create() */
+int proc_init(struct thread *child_thread) {
+    int spl = splhigh();
+
+    /* pid allocation */
+    pid_t child_pid;
+    int err = proc_addentry(child_thread, &child_pid);
+    if(err) {
+        return err;
+    }
+
+    /* update all the fields */
+    child_thread->t_pid = child_pid;
+    if(child_pid == 1) {
+        child_thread->t_ppid = 0;
+    } 
+    else {
+        child_thread->t_ppid = curthread->t_pid;
+    }
+	child_thread->t_exitflag = 0; 
+	child_thread->t_exitcode = -1;
+
+    /* Create locking device for wait_pid */
+    child_thread->t_exitlock = lock_create("lock for exit...");
+	lock_acquire(child_thread->t_exitlock);
+
+    splx(spl);
+    return 0;
 }
 
 
@@ -84,37 +128,28 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
 {
     int err = 0;
 
+    /* Create trap frame for the child and thread object */
+    struct trapframe *child_tf = (struct trapframe *)kmalloc(sizeof(struct trapframe));
+    if(child_tf == NULL) {
+        return ENOMEM;
+    }
+    *child_tf = *tf;
+
     /* copy parent space into new child address space */
     struct addrspace *child_addrspace = NULL;
     err = as_copy(curthread->t_vmspace, &child_addrspace);
     if(err) {
-        return err;
-    }
-
-    /* 
-     * Create trap frame for the child and thread object
-     * Note: malloc has to be used here because tf will be removed from the stack after use. We want the child TF to persist
-     * even if the parent is terminated and everything about it is destroyed
-     */
-    struct trapframe *child_tf = (struct trapframe *)kmalloc(sizeof(struct trapframe));
-    if(child_tf == NULL) {
-        as_destroy(child_addrspace);
-        return ENOMEM;
-    }
-
-    /* Copy over trap frame */
-    *child_tf = *tf;
-
-    /* Find a spot in the process_table */
-    pid_t child_pid;
-    struct thread *child_thread;
-    err = proc_addentry(child_thread, &child_pid);
-    if(err) {
-        as_destroy(child_addrspace);
         kfree(child_tf);
         return err;
     }
 
+    int spl = splhigh();           // turn off interrupts just for thread creation
+
+    if(!proc_pid_avail) {
+        return EAGAIN;
+    }
+    /* Find a spot in the process_table */
+    struct thread *child_thread;
     /* create a fork, child thread is set up to start from md_forkentry */
     err = thread_fork("dont care", (void *)child_tf, (unsigned long)child_addrspace, md_forkentry, &child_thread);
     if(err) {
@@ -123,15 +158,13 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
         return err;
     }
 
-    /* update child_thread information */
-    child_thread->t_pid = child_pid;
-    child_thread->t_ppid = curthread->t_pid;
+    /* update child_thread addrspace */
     child_thread->t_vmspace = child_addrspace;
-	child_thread->t_exitflag = 0; 
-	child_thread->t_exitcode = 0;
+
+    splx(spl);                      // interrupts on
 
     /* return */
-    *ret_val = child_pid;
+    *ret_val = child_thread->t_pid;
     return 0;
 }
 
@@ -147,16 +180,16 @@ void proc_exit(int exitcode)
     lock_release(curthread->t_exitlock);        // Now others waiting for this pid can continue with their lives
 
     /* Apparently we need to change the status of this processes children... ADOPTION!! */
-    // int index;
-    // struct thread *child;
-    // for(index=0; index<MAX_PID; index++) {
-    //     child = (struct thread *)array_getguy(process_table, index);
-    //     if(child != NULL) {
-    //         if(curthread->t_pid == child->t_ppid) {
-    //             child->t_ppid = 1;
-    //         }
-    //     }
-    // }
+    int index;
+    struct thread *child;
+    for(index=0; index<MAX_PID; index++) {
+        child = (struct thread *)array_getguy(process_table, index);
+        if(child != NULL) {
+            if(curthread->t_pid == child->t_ppid) {
+                child->t_ppid = 1;
+            }
+        }
+    }
 
     thread_exit();
 }
@@ -220,6 +253,6 @@ int proc_reap(int pid){
         }
 	}
 
-    panic("What the f**k is going on!?");
+    //panic("What the f**k is going on!?");
     return -1;
 }

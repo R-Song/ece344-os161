@@ -46,7 +46,4 @@ int proc_wait(int pid, int *status);
  */ 
 int proc_reap(int pid);
 
-/* honestly a very random function... some how allows code to compile... */
-void set_addrspace(struct addrspace *new_addrspace);
-
 #endif /* _PROCESS_H_ */

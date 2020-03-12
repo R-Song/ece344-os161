@@ -193,7 +193,7 @@ int proc_wait(int pid, int *exitcode)
     
     /* Call process and thread reaping function */
     *exitcode = current->t_exitcode;
-    int err = proc_reap(pid);
+    proc_reap(pid);
     splx(spl);
 
     return 0;
@@ -218,10 +218,4 @@ int proc_reap(int pid){
 
     panic("What the f**k is going on!?");
     return -1;
-}
-
-/* Used once in md_forkentry... idk why its neccessary but otherwise it doesn't compile! */
-void set_addrspace(struct addrspace *new_addrspace) {
-    curthread->t_vmspace = new_addrspace;
-    as_activate(curthread->t_vmspace);
 }

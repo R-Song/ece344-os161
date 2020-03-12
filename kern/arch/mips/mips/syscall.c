@@ -9,6 +9,7 @@
 #include <syscall.h>
 #include <clock.h>
 #include <addrspace.h>
+#include <thread.h>
 #include <curthread.h>
 #include <process.h>
 
@@ -160,9 +161,9 @@ md_forkentry(void *tf, unsigned long child_addrspace)
 	kfree(tf);
 
 	/* Change the address space and activate the address space */
-	struct addrspace *next_addrspace = (struct addrspace *)child_addrspace;
-	set_addrspace(next_addrspace);
-
+	struct addrspace *new_addrspace = (struct addrspace *)child_addrspace;
+    curthread->t_vmspace = new_addrspace;
+    as_activate(curthread->t_vmspace);
 	/* Enter user mode */
 	mips_usermode(&child_tf);
 

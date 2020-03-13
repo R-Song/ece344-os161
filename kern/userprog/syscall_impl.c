@@ -219,6 +219,7 @@ int sys_getpid(pid_t *retval) {
 int sys__exit(int exitcode)
 {	
 	proc_exit(exitcode);
+	panic("Should not return from exit...EVER!!");
 	return 0;
 }
 
@@ -236,7 +237,10 @@ int sys_waitpid(int pid, int *status, int options, int *retval)
 		*retval = -1;
 		return err;
 	}
-	
+
+	/* make sure exit code changed. -25 is a magic number :) */
+	assert(exitcode != -25);
+
 	err = copyout( &exitcode, (userptr_t)status, sizeof(int));
 	if( err ){
 		*retval = -1;

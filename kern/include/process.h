@@ -21,8 +21,9 @@ struct thread;
 void proc_bootstrap();
 
 /* Finds an available pid_t and allocates process entry to the process hashtable */
-int proc_addentry(void *t_block, pid_t *retval);
+int proc_addentry(struct thread *thread, pid_t *retval);
 int proc_pid_avail();
+
 
 /* 
  * Reap a process by deallocating it entirely from the process hashtable 
@@ -54,5 +55,9 @@ int proc_reap(int pid);
  * Creates new process and makes it execute a different program
  */ 
 int proc_execv(char *pathname_k, char **argv, int size_args);
+
+/* destroy process */
+void proc_destroy(struct thread *thread);
+
 
 #endif /* _PROCESS_H_ */

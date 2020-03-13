@@ -23,13 +23,16 @@
 struct thread *curthread;
 
 /* Table of sleeping threads. */
-static struct array *sleepers;
+struct array *sleepers;
 
 /* List of dead threads to be disposed of. */
 struct array *zombies;
 
 /* Total number of outstanding threads. Does not count zombies[]. */
 static int numthreads;
+
+/* Lock to help aid race condition between destroy and exit */
+static struct lock *thread_exit_lock;
 
 /*
  * Returns number of active threads
@@ -48,10 +51,6 @@ static
 struct thread *
 thread_create(const char *name)
 {
-	/* Make creation of thread atomic */
-	int spl;
-	spl = splhigh();
-
 	struct thread *thread = kmalloc(sizeof(struct thread));
 	if (thread==NULL) {
 		return NULL;
@@ -71,12 +70,12 @@ thread_create(const char *name)
 	/* lab3 code - begin */
 	int err = proc_init(thread);
 	if(err) {
+		kfree(thread->t_name);
 		kfree(thread);
 		return NULL;
 	}
 	/* lab3 code - end */
 
-	splx(spl);
 	return thread;
 }
 
@@ -90,6 +89,8 @@ thread_create(const char *name)
 void
 thread_destroy(struct thread *thread)
 {
+	lock_acquire(thread_exit_lock);
+
 	assert(thread != curthread);
 
 	/* These things are cleaned up in thread_exit. */
@@ -103,6 +104,8 @@ thread_destroy(struct thread *thread)
 
 	kfree(thread->t_name);
 	kfree(thread);
+
+	lock_release(thread_exit_lock);
 }
 
 
@@ -114,18 +117,21 @@ static
 void
 exorcise(void)
 {
-	int i, result;
+	int i;
 
 	assert(curspl>0);
 	
 	for (i=0; i<array_getnum(zombies); i++) {
 		struct thread *z = array_getguy(zombies, i);
 		assert(z!=curthread);
-		thread_destroy(z);
+		/* This has to be changed to accomodate processes */
+		if(z->t_ppid == 1 && z->t_adoptedflag == 1) {
+			proc_destroy(z);
+			thread_destroy(z);
+			array_remove(zombies, i);
+			i--;
+		}
 	}
-	result = array_setsize(zombies, 0);
-	/* Shrinking the array; not supposed to be able to fail. */
-	assert(result==0);
 }
 
 /*
@@ -193,6 +199,11 @@ thread_bootstrap(void)
 	zombies = array_create();
 	if (zombies==NULL) {
 		panic("Cannot create zombies array\n");
+	}
+
+	thread_exit_lock = lock_create("thread exit lock");
+	if(thread_exit_lock == NULL) {
+		panic("Cant create thread exit lock");
 	}
 
 	proc_bootstrap();
@@ -472,6 +483,8 @@ thread_exit(void)
 	}
 
 	splhigh();
+	
+	lock_acquire(thread_exit_lock);
 
 	if (curthread->t_vmspace) {
 		/*
@@ -487,6 +500,8 @@ thread_exit(void)
 		VOP_DECREF(curthread->t_cwd);
 		curthread->t_cwd = NULL;
 	}
+
+	lock_release(thread_exit_lock);
 
 	assert(numthreads>0);
 	numthreads--;

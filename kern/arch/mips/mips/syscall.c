@@ -155,8 +155,12 @@ mips_syscall(struct trapframe *tf)
 void
 md_forkentry(void *tf, unsigned long child_addrspace)
 {	
-	/* Load the parent trap frame onto the stack */
-	struct trapframe child_tf = *((struct trapframe *) tf);
+	/* Recase the trapframe */
+	struct trapframe *temp_tf = (struct trapframe *) tf;
+	struct addrspace *child_as = (struct addrspace *) child_addrspace;
+
+	/* Return registers, push child_tf onto the stack */
+	struct trapframe child_tf = *temp_tf;
 	child_tf.tf_v0 = 0; 			// fork returns 0 to the child
 	child_tf.tf_a3 = 0; 			// signal no error
 	child_tf.tf_epc += 4;			// start after the exception
@@ -165,9 +169,9 @@ md_forkentry(void *tf, unsigned long child_addrspace)
 	kfree(tf);
 
 	/* Change the address space and activate the address space */
-	struct addrspace *new_addrspace = (struct addrspace *)child_addrspace;
-    curthread->t_vmspace = new_addrspace;
+    curthread->t_vmspace = child_as;
     as_activate(curthread->t_vmspace);
+	
 	/* Enter user mode */
 	mips_usermode(&child_tf);
 

@@ -144,6 +144,7 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
     /* Create trap frame for the child and thread object */
     struct trapframe *child_tf = (struct trapframe *)kmalloc(sizeof(struct trapframe));
     if(child_tf == NULL) {
+        //proc_exit(1);       /* For forkbomb? */
         return ENOMEM;
     }
     *child_tf = *tf;
@@ -169,9 +170,6 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
         kfree(child_tf);
         return err;
     }
-
-    /* update child_thread addrspace? */
-    //child_thread->t_vmspace = child_addrspace;
 
     /* return */
     *ret_val = child_thread->t_pid;

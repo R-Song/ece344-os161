@@ -21,8 +21,9 @@ struct thread;
 void proc_bootstrap();
 
 /* Finds an available pid_t and allocates process entry to the process hashtable */
-int proc_addentry(void *t_block, pid_t *retval);
+int proc_addentry(struct thread *thread, pid_t *retval);
 int proc_pid_avail();
+
 
 /* 
  * Reap a process by deallocating it entirely from the process hashtable 
@@ -49,6 +50,9 @@ int proc_wait(int pid, int *status);
 /*
  * Reaps the process at given pid; destroys lock and removes it from the zombies array
  */ 
-int proc_reap(int pid);
+void proc_reap(int pid);
+
+/* destroy process */
+void proc_destroy(struct thread *thread);
 
 #endif /* _PROCESS_H_ */

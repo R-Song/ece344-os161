@@ -10,6 +10,7 @@
 #include <types.h>
 #include <kern/errno.h>
 #include <kern/unistd.h>
+#include <kern/limits.h>
 #include <lib.h>
 #include <kern/callno.h>
 #include <clock.h>
@@ -243,6 +244,98 @@ int sys_waitpid(int pid, int *status, int options, int *retval)
 	}
 	/* if no errors, return the pid */
 	*retval = pid;
+	return 0;
+}
+
+/*
+ * execv replaces currently executing program with a newly loaded program image
+ * this occurs within one process; process id is unchanged
+ * 
+ * pathname of the program to run is passed as program
+ * args is an array of 0-terminated strings; the array itself should be terminated by a NULL ptr
+ * 
+ * the argument strings should be copied into the new process as the new process' argv[] array
+ * in the new process, argv[arg] must be NULL
+ * 
+ * argv[0] in the new process contains the name that was used to invoke the program
+ * this is not necessarily the same as program, and is only a convention and should not be enforced by the kernel
+ * 
+ * process file table and current workind directory are not modified by execv
+ * 
+ * Return values:
+ * on success, nada, the new programming is executing
+ * on failure, returns -1 and sets erro to:
+ * ENODEV	The device prefix of program did not exist. - probabably done in proc_execv
+ * ENOTDIR	A non-final component of program was not a directory. - probabably done in proc_execv
+ * ENOENT	program did not exist. - here
+ * EISDIR	program is a directory. 
+ * ENOEXEC	program is not in a recognizable executable file format, was for the wrong platform, or contained invalid fields. - proc
+ * ENOMEM	Insufficient virtual memory is available. - proc
+ * E2BIG	The total size of the argument strings is too large. - here
+ * EIO	A hard I/O error occurred.
+ * EFAULT	One of the args is an invalid pointer.
+ * 
+ */ 
+int sys_execv(const char *program, char **args, pid_t *retval){
+	int err = 0;
+	int actual_size; // does it need to be a pointer????
+
+	/* Check if program exists */
+	if( program == NULL ){
+		*retval = -1;
+		return ENOENT;
+	}
+
+	/* Check if one of the args is invalid */
+	if( args == NULL ){
+		*retval = -1;
+		return EFAULT;
+	}
+	/* Check if pointer is valid */
+	char *valid_arr;
+	err = copyin( (const_userptr_t)args, (void *)&valid_arr, sizeof(char **));
+	if( err ){
+		*retval = -1; 
+		return err;
+	}
+	/* Size of args array */
+	int size_args = 0;
+	while ( args[size_args] != NULL ){
+		size_args = size_args + 1;
+	}
+
+	/* Get the length of the args array and use it for allocating space for the kernel array in which you will copy into */
+	char **argv = kmalloc( size_args * sizeof(char *));
+	int args_str, del_from;
+
+	/* Copy the contents of the args array into argv */
+	for( args_str = 0; args_str < size_args; args_str++ ){
+		/* Allocate space for each string in argv array */
+		argv[args_str] = kmalloc(sizeof(char *) * (NAME_MAX + 1));
+		err = copyinstr(( const_userptr_t )program, argv[args_str], (NAME_MAX + 1), &actual_size); // add + 1 to name_max??
+		if( err ){
+			/* Free everything allocated until current args element (all of argv) and return failure*/
+			for( del_from = 0; del_from < args_str; del_from++ ){
+				kfree(argv[del_from]);
+			}
+			kfree(argv);
+			*retval = -1;
+			return err;
+		}
+	}
+	
+	char pathname_k[PATH_MAX];
+
+	/* Checks if the pathname exceeds pathname max length or if the pathname has run into the end of the userspace */
+	err = copyinstr(( const_userptr_t )program, pathname_k,  PATH_MAX, &actual_size);
+	if( err ){
+		*retval = -1;
+		return err;
+	}
+
+	/* Create the new address space, loading the executable and other similar runprogram actions are done in proc_execv*/
+	err = proc_execv(pathname_k, argv, size_args);
+
 	return 0;
 }
 

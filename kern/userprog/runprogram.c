@@ -22,7 +22,7 @@
  * Calls vfs_open on progname and thus may destroy it.
  */
 int
-runprogram(char *progname)
+runprogram(char *progname, char **argv, unsigned long size_args)
 {
 	struct vnode *v;
 	vaddr_t entrypoint, stackptr;
@@ -56,7 +56,7 @@ runprogram(char *progname)
 	}
 
 	/* Done with the file now. */
-	vfs_close(v);
+	//vfs_close(v);
 
 	/* Define the user stack in the address space */
 	result = as_define_stack(curthread->t_vmspace, &stackptr);
@@ -64,6 +64,31 @@ runprogram(char *progname)
 		/* thread_exit destroys curthread->t_vmspace */
 		return result;
 	}
+    
+	char **temp = kmalloc( sizeof(char *) * size_args );
+
+    unsigned long index;
+    int len;
+    for( index = 0; index < size_args; index++ ){
+        len = strlen(argv[index]) + 1;
+        stackptr = stackptr - len;
+        result = copyout((const void *)argv[index], (userptr_t)(stackptr), (size_t)len);
+        if( result ){
+            kfree(temp);
+            return result;
+        } 
+        temp[index] = (char *)stackptr;   
+    }
+
+    stackptr = stackptr - stackptr % 4;
+
+    stackptr = stackptr - (sizeof(char *) * size_args);
+
+    result = copyout((const void *)temp, (userptr_t)stackptr, (size_t)(sizeof(char *) * size_args));
+    kfree(temp);
+    if( result ){
+        return result;
+    }
 
 	/* Warp to user mode. */
 	md_usermode(0 /*argc*/, NULL /*userspace addr of argv*/,

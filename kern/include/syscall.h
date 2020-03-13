@@ -29,4 +29,6 @@ int sys_waitpid(pid_t pid, int *status, int options, pid_t *retval);
 
 int sys__exit(int exitcode);
 
+int sys_execv(const char *program, char **args, pid_t *retval);
+
 #endif /* _SYSCALL_H_ */

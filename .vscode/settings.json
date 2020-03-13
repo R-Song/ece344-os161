@@ -1,0 +1,17 @@
+{
+    "files.associations": {
+        "errno.h": "c",
+        "unistd.h": "c",
+        "callno.h": "c",
+        "syscall.h": "c",
+        "synch.h": "c",
+        "array.h": "c",
+        "process.h": "c",
+        "curthread.h": "c",
+        "thread.h": "c",
+        "elf.h": "c",
+        "addrspace.h": "c",
+        "types.h": "c",
+        "functional": "c"
+    }
+}

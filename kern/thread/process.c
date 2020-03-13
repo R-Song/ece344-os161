@@ -2,6 +2,9 @@
  * Core process system.
  */
 #include <process.h>
+#include <kern/errno.h>
+#include <kern/unistd.h>
+#include <kern/limits.h>
 #include <array.h>
 #include <hashmap.h>
 #include <types.h>
@@ -13,8 +16,8 @@
 #include <kern/errno.h>
 #include <synch.h>
 #include <machine/spl.h>
-
-
+#include <elf.h>
+#include <vfs.h>
 /*************************************************************************************************/
 /* Following functions deal with process lookup table, handling PID allocation and reclaimation. */
 /*************************************************************************************************/
@@ -255,4 +258,99 @@ int proc_reap(int pid){
 
     //panic("What the f**k is going on!?");
     return -1;
+}
+/*
+ * Creates new process and makes it execute a different program
+ */ 
+int proc_execv(char *pathname_k, char **argv, int size_args){
+	struct vnode *v;
+	vaddr_t entrypoint, stack_ptr;
+	int result;
+
+	/* Open the file. */
+	result = vfs_open(pathname_k, O_RDONLY, &v);
+	if (result) {
+		return result;
+	}
+    
+	/* Save the old address space */
+	assert(curthread->t_vmspace != NULL);
+    struct addrspace *old_add = curthread->t_vmspace;
+    curthread->t_vmspace = NULL;
+
+	/* Create a new address space. */
+	curthread->t_vmspace = as_create();
+	if (curthread->t_vmspace==NULL) {
+        /* Reassing the current address space to the old one before returning */
+        curthread->t_vmspace = old_add;
+		vfs_close(v);
+		return ENOMEM;
+	}
+
+	/* Activate it. */
+	as_activate(curthread->t_vmspace);
+
+	/* Load the executable. */
+	result = load_elf(v, &entrypoint); // need to implement load_elf differently 
+	if (result) {
+		/* thread_exit destroys curthread->t_vmspace */
+        as_destroy(curthread->t_vmspace);
+        curthread->t_vmspace = old_add;
+		vfs_close(v);
+		return result;
+	}
+
+	/* Done with the file now. */
+	//vfs_close(v);
+
+	/* Define the user stack in the address space */
+	result = as_define_stack(curthread->t_vmspace, &stack_ptr);
+	if (result) {
+		/* thread_exit destroys curthread->t_vmspace */
+        as_destroy(curthread->t_vmspace);
+        curthread->t_vmspace = old_add;
+		return result;
+	}
+
+    as_destroy(old_add);
+
+    char **temp = kmalloc( sizeof(char *) * size_args );
+
+    int index;
+    int len;
+    for( index = 0; index < size_args; index++ ){
+        len = strlen(argv[index]) + 1;
+        stack_ptr = stack_ptr - len;
+        result = copyout((const void *)argv[index], (userptr_t)(stack_ptr), (size_t)len);
+        if( result ){
+            kfree(temp);
+            return result;
+        } 
+        temp[index] = (char *)stack_ptr;   
+    }
+
+    stack_ptr = stack_ptr - stack_ptr % 4;
+
+    stack_ptr = stack_ptr - (sizeof(char *) * size_args);
+
+    result = copyout((const void *)temp, (userptr_t)stack_ptr, (size_t)(sizeof(char *) * size_args));
+    kfree(temp);
+    if( result ){
+        return result;
+    }
+
+    // maybe here we need to free argv completely
+    int i;
+    for( i=0; i < size_args; i++ ){
+        kfree(argv[i]);
+    }
+    kfree(argv);
+
+	/* Warp to user mode. */
+	md_usermode(size_args, NULL /*userspace addr of argv*/,
+		    stack_ptr, entrypoint);
+	
+	/* md_usermode does not return */
+	panic("md_usermode returned\n");
+	return EINVAL;    
 }

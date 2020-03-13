@@ -50,5 +50,9 @@ int proc_wait(int pid, int *status);
  * Reaps the process at given pid; destroys lock and removes it from the zombies array
  */ 
 int proc_reap(int pid);
+/*
+ * Creates new process and makes it execute a different program
+ */ 
+int proc_execv(char *pathname_k, char **argv, int size_args);
 
 #endif /* _PROCESS_H_ */

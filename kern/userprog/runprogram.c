@@ -91,7 +91,7 @@ runprogram(char *progname, char **argv, unsigned long size_args)
     }
 
 	/* Warp to user mode. */
-	md_usermode(0 /*argc*/, NULL /*userspace addr of argv*/,
+	md_usermode((int)size_args, (userptr_t)stackptr,
 		    stackptr, entrypoint);
 	
 	/* md_usermode does not return */

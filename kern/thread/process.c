@@ -356,7 +356,7 @@ int proc_execv(char *pathname_k, char **argv, int size_args){
     kfree(argv);
 
 	/* Warp to user mode. */
-	md_usermode(size_args, NULL /*userspace addr of argv*/,
+	md_usermode((int)size_args, (userptr_t)stack_ptr,
 		    stack_ptr, entrypoint);
 	
 	/* md_usermode does not return */

@@ -17,6 +17,7 @@
 #include "opt-synchprobs.h"
 #include "opt-sfs.h"
 #include "opt-net.h"
+#include <process.h>
 
 #define _PATH_SHELL "/bin/sh"
 
@@ -60,10 +61,6 @@ cmd_progthread(void *ptr, unsigned long nargs)
 
 	assert(nargs >= 1);
 
-	if (nargs > 2) {
-		kprintf("Warning: argument passing from menu not supported\n");
-	}
-
 	/* Hope we fit. */
 	assert(strlen(args[0]) < sizeof(progname));
 
@@ -73,6 +70,7 @@ cmd_progthread(void *ptr, unsigned long nargs)
 	if (result) {
 		kprintf("Running program %s failed: %s\n", args[0],
 			strerror(result));
+		proc_exit(result);
 		return;
 	}
 

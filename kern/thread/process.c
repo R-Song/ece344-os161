@@ -18,9 +18,12 @@
 #include <machine/spl.h>
 #include <elf.h>
 #include <vfs.h>
-/*************************************************************************************************/
-/* Following functions deal with process lookup table, handling PID allocation and reclaimation. */
-/*************************************************************************************************/
+
+/********************************************************************************************/
+/* Functions that deal with process lookup table, handling PID allocation and reclaimation, */
+/*              process initialization, destruction, and reaping                            */
+/********************************************************************************************/
+
 
 /* constant for max number of threads */
 const int MAX_PID = 150;
@@ -31,7 +34,7 @@ struct thread **process_table;
 /* Redeclare zombies array used in thread.c */
 extern struct array *zombies;
 
-/* Bootstrap - Returns 0 on success, 1 on failure */
+/* Initialize process table */
 void proc_bootstrap() 
 {
     (struct thread **)process_table = (struct thread **)kmalloc(MAX_PID*sizeof(struct thread *));
@@ -46,11 +49,12 @@ void proc_bootstrap()
     }
 }
 
-/* Add an entry - returns the PID, if no more PID's return -1 - thread being passed in should not already be in the table! */
+/* 
+ * Add an entry - returns the PID, if no more PID's exist return EAGAIN. 
+ * Index starts at 1 because PID 0 is reserved for swapper or scheduler. 
+ */
 int proc_addentry(struct thread *thread, pid_t *retval)
 {   
-    /* Find an available PID */
-    /* Index starts at 1 because PID 0 is reserved for swapper or scheduler. PID 1 should be assigned to init, the process created in thread_bootstrap */
     pid_t index;
     for( index=1; index<MAX_PID; index++ ) {
         if(process_table[index] == NULL) {
@@ -65,8 +69,6 @@ int proc_addentry(struct thread *thread, pid_t *retval)
 /* Returns 1 if there is an available PID, 0 otherwise */
 int proc_pid_avail()
 {   
-    /* Find an available PID */
-    /* Index starts at 1 because PID 0 is reserved for swapper or scheduler. PID 1 should be assigned to init. */
     pid_t index;
     for( index=1; index<MAX_PID; index++ ) {
         if(process_table[index] == NULL) {
@@ -76,19 +78,16 @@ int proc_pid_avail()
     return 0;
 }
 
-/* Delete an entry - Using setguy because we want the value to be NULL. Later we will switch the hashmaps */
+/* Delete an entry from the process table */
 void proc_deleteentry(pid_t pid)
 {
     process_table[pid] = NULL;
 }
 
-/* Destroy process table */
-void proc_table_destroy()
-{
-    kfree(process_table);
-}
-
-/* Initializes the process informaton, this function is called in thread_create() */
+/* 
+ * Initialize thread fields pertaining to the process, this function is called in thread_create(), 
+ * which is called in thread_fork(), which is called in proc_fork() , hench why its in this file :)
+ */
 int proc_init(struct thread *child_thread) {
 
     int spl = splhigh();
@@ -124,19 +123,55 @@ int proc_init(struct thread *child_thread) {
     return 0;
 }
 
-/* destroy process */
+/* 
+ * Destroy information related to the process 
+ * We only do this when are reaping a process
+ */
 void proc_destroy(struct thread *thread) {
     sem_destroy(thread->t_exitsem);
-    /* remove process from the table */
     proc_deleteentry(thread->t_pid);
 }
+
+/* 
+ * Reap a process, remove it from process table as well as the zombie array
+ * Only the parent of a process can reap it, so this is naturally called in proc_waitpid
+ */
+void proc_reap(int pid){
+    struct thread* to_reap = process_table[pid];
+    assert(to_reap->t_pid == pid);
+
+    int idx;
+    for (idx=0; idx<array_getnum(zombies); idx++) {
+		struct thread *to_remove = array_getguy(zombies, idx);
+        if( to_remove->t_pid == pid ){
+            array_remove(zombies, idx);
+            proc_destroy(to_reap);
+            thread_destroy(to_reap);
+            return;
+        }
+	}
+}
+
 
 
 /********************************************************/
 /* Following functions are helpers for the system calls */
 /********************************************************/
 
-/* Create a process fork by using thread fork, and jumping to the machine dependant md_forkentry to do a context switch */
+
+/* 
+ * Helper function for sys_fork().
+ * 
+ * Strategy for implementation:
+ *      1. Create a trap frame for the child that is the same as current trapframe
+ *      2. Create new address space for the child
+ *      3. Assign the child a pid
+ *      4. Create a new thread that starts at md_forkentry using thread_fork()
+ *         This essentially creates a thread that when scheduled, jumps into userspace
+ *         with the same trapframe as this current thread, but a different address space!
+ *      5. When thread is created, it is pushed onto the process table and given a proper 
+ *         pid along with ppid.
+ */
 int proc_fork(struct trapframe *tf, pid_t *ret_val) 
 {
     int err = 0;
@@ -144,7 +179,6 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
     /* Create trap frame for the child and thread object */
     struct trapframe *child_tf = (struct trapframe *)kmalloc(sizeof(struct trapframe));
     if(child_tf == NULL) {
-        //proc_exit(1);       /* For forkbomb? */
         return ENOMEM;
     }
     *child_tf = *tf;
@@ -178,39 +212,17 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
 
 
 /* 
- * Given an exitcode, change the process information.
- * We also want to signal the threads waiting on this one, we do this by using the t_exitsem 
+ * Helper function for sys_wait().
+ * 
+ * Strategy for implementation: 
+ *      1. Check to make sure pid is valid. That is if it is one of current process's children and if
+ *         the pid exists on the process table
+ *      2. If the child is already exited, return the exit code
+ *      3. If the child is not exited, we try spin on the semaphore until the child
+ *         process has signaled to us that they are done and have exited
+ *      4. We then reap the child process and return the exitcode
  */
-void proc_exit(int exitcode) 
-{
-    /* Disable interrupts, no interruptions for exiting! */
-    int spl = splhigh();
-
-    curthread->t_exitcode = exitcode;
-    curthread->t_exitflag = 1;
-
-    V(curthread->t_exitsem);        // Now others waiting for this pid can continue with their lives
-
-    /* Apparently we need to change the status of this processes children... ADOPTION!! */
-    int index;
-    struct thread *child;
-    for(index=1; index<MAX_PID; index++) {
-        child = process_table[index];
-        if(child != NULL) {
-            if(curthread->t_pid == child->t_ppid) {
-                child->t_ppid = 1;
-                child->t_adoptedflag = 1;
-            }
-        }
-    }
-
-    splx(spl);
-    thread_exit();
-}
-
-
-/* Helper function for sys_wait */
-int proc_wait(int pid, int *exitcode)
+int proc_waitpid(pid_t pid, int *exitcode)
 {
     /* Turn off interrupts */
     int spl = splhigh();
@@ -252,114 +264,170 @@ int proc_wait(int pid, int *exitcode)
     }
 }
 
-/* reap a process, remove it from process table and zombie array */
-void proc_reap(int pid){
-    struct thread* to_reap = process_table[pid];
-    assert(to_reap->t_pid == pid);
+/* 
+ * Helper function for sys_exit().
+ * 
+ * Strategy for implementation:
+ *      1. Update the t_exitcode and t_exitflag of this current thread
+ *      2. Signal waiting processes using the exit semaphore
+ *      3. Let pid 1 adopt any of the children that this process has
+ *      4. Call thread_exit() to move this thread to a zombie state
+ */
+void proc_exit(int exitcode) 
+{
+    /* Disable interrupts, no interruptions for exiting! */
+    int spl = splhigh();
 
-    int idx;
-    for (idx=0; idx<array_getnum(zombies); idx++) {
-		struct thread *to_remove = array_getguy(zombies, idx);
-        if( to_remove->t_pid == pid ){
-            array_remove(zombies, idx);
-            proc_destroy(to_reap);
-            thread_destroy(to_reap);
-            return;
-        }
-	}
-}
-/*
- * Creates new process and makes it execute a different program
- */ 
-int proc_execv(char *pathname_k, char **argv, int size_args){
-	struct vnode *v;
-	vaddr_t entrypoint, stack_ptr;
-	int result;
+    curthread->t_exitcode = exitcode;
+    curthread->t_exitflag = 1;
 
-	/* Open the file. */
-	result = vfs_open(pathname_k, O_RDONLY, &v);
-	if (result) {
-		return result;
-	}
-    
-	/* Save the old address space */
-	assert(curthread->t_vmspace != NULL);
-    struct addrspace *old_add = curthread->t_vmspace;
-    curthread->t_vmspace = NULL;
+    V(curthread->t_exitsem);        // Now others waiting for this pid can continue with their lives
 
-	/* Create a new address space. */
-	curthread->t_vmspace = as_create();
-	if (curthread->t_vmspace==NULL) {
-        /* Reassing the current address space to the old one before returning */
-        curthread->t_vmspace = old_add;
-		vfs_close(v);
-		return ENOMEM;
-	}
-
-	/* Activate it. */
-	as_activate(curthread->t_vmspace);
-
-	/* Load the executable. */
-	result = load_elf(v, &entrypoint); // need to implement load_elf differently 
-	if (result) {
-		/* thread_exit destroys curthread->t_vmspace */
-        as_destroy(curthread->t_vmspace);
-        curthread->t_vmspace = old_add;
-		vfs_close(v);
-		return result;
-	}
-
-	/* Done with the file now. */
-	//vfs_close(v);
-
-	/* Define the user stack in the address space */
-	result = as_define_stack(curthread->t_vmspace, &stack_ptr);
-	if (result) {
-		/* thread_exit destroys curthread->t_vmspace */
-        as_destroy(curthread->t_vmspace);
-        curthread->t_vmspace = old_add;
-		return result;
-	}
-
-    as_destroy(old_add);
-
-    char **temp = kmalloc( sizeof(char *) * size_args );
-
+    /* Apparently we need to change the status of this processes children... ADOPTION!! */
     int index;
+    struct thread *child;
+    for(index=1; index<MAX_PID; index++) {
+        child = process_table[index];
+        if(child != NULL) {
+            if(curthread->t_pid == child->t_ppid) {
+                child->t_ppid = 1;
+                child->t_adoptedflag = 1;
+            }
+        }
+    }
+
+    splx(spl);
+    thread_exit();
+}
+
+
+/*
+ * Helper function for sys_execv()
+ * Refer to syscall_impl.c for the full description of the system call
+ * 
+ * Strategy for implementation:
+ *      1. Create a new address space for the program, we should save the current one in case of failure
+ *      2. Activate new address space 
+ *      3. Load the ELF file
+ *      4. Define the stack in the user space
+ *      5. Destroy old address space
+ *      6. Push arguments onto the user stack (tricky!)   
+ *           (i) Have to watch out for memory alignment
+ *           (ii) Have to allocate room for both the actual strings, as well as the pointers to them
+ *                This means that we have a bunch of null terminated strings on the stack followed by an array of pointers
+ *              0xFFFFFFFF:    ----- strv_n -----
+ *                                     .
+ *                                     .
+ *                                     .
+ *                             ----- strv_0 -----
+ *                             ----- argv_n -----
+ *                                     .
+ *                                     .
+ *                                     .
+ *                             ----- argv_0 -----  -> STACK_PTR   
+ *                NOTE: argv_0 is usually the program name, but we don't enforce this
+ *      7. Call md_usermode to get into usermode. Should not return from there
+ */ 
+int proc_execv(char *program, int argc, char **argv){
+    struct vnode *v;
+    vaddr_t entrypoint, stackptr;
+    struct addrspace *cur_addrspace;
+    int err;
+    int idx;
+
+    /* Open the file */
+    err = vfs_open(program, O_RDONLY, &v);
+    if(err) {
+        goto execv_failed;
+    }
+
+    /* save current addrspace, use it in case loading a file fails */
+    cur_addrspace = curthread->t_vmspace;
+
+    /* create a new address space */
+    curthread->t_vmspace = as_create();
+    if(curthread->t_vmspace == NULL) {
+        vfs_close(v);
+        curthread->t_vmspace = cur_addrspace;       /* Restore old addrspace */
+        err = ENOMEM;
+        goto execv_failed;
+    }
+
+    /* activate new addrspace */
+    as_activate(curthread->t_vmspace);
+
+    /* load the executable */
+    err = load_elf(v, &entrypoint);
+    if(err) {
+        vfs_close(v);
+        as_destroy(curthread->t_vmspace);
+        curthread->t_vmspace = cur_addrspace;
+        goto execv_failed;
+    }   
+
+    /* Done with the file? */
+    vfs_close(v);
+
+    /* Define the user stack in the address space */
+    err = as_define_stack(curthread->t_vmspace, &stackptr);
+    if(err){
+        as_destroy(curthread->t_vmspace);
+        curthread->t_vmspace = cur_addrspace;
+        goto execv_failed;
+    }
+
+    /* Push actual strings onto the stack, keep memory aligned! */
+    char **user_argv = kmalloc(argc*sizeof(char *));
+
     int len;
-    for( index = 0; index < size_args; index++ ){
-        len = strlen(argv[index]) + 1;
-        stack_ptr = stack_ptr - len;
-        result = copyout((const void *)argv[index], (userptr_t)(stack_ptr), (size_t)len);
-        if( result ){
-            kfree(temp);
-            return result;
+    for( idx = 0; idx < argc; idx++ ){
+        len = strlen(argv[idx]) + 1;        /* account for the null termination */
+        stackptr -= len;                    /* allocate space on the stack for this string */
+        stackptr -= stackptr % 4;           /* important for memory alignment */
+        err = copyout((const void *)argv[idx], (userptr_t)(stackptr), (size_t)len);        /* copy out the string to the stack */
+        if( err ){
+            kfree(user_argv);
+            goto execv_failed;
         } 
-        temp[index] = (char *)stack_ptr;   
+        user_argv[idx] = (char *)stackptr;   /* update to point towards the string */
+    }
+    assert( (stackptr % 4) == 0 );  /* ensure memory alignment */
+
+    /* Push down the stack to accomodate argc */
+    stackptr = stackptr - ( argc*sizeof(char *) );
+
+    /* Copy the array over to the stack */
+    err = copyout((const void *)user_argv, (userptr_t)stackptr, (size_t) (argc*sizeof(char *)) );
+    if(err){
+        kfree(user_argv);
+        as_destroy(curthread->t_vmspace);
+        curthread->t_vmspace = cur_addrspace;
+        goto execv_failed;
     }
 
-    stack_ptr = stack_ptr - stack_ptr % 4;
-
-    stack_ptr = stack_ptr - (sizeof(char *) * size_args);
-
-    result = copyout((const void *)temp, (userptr_t)stack_ptr, (size_t)(sizeof(char *) * size_args));
-    kfree(temp);
-    if( result ){
-        return result;
-    }
-
-    // maybe here we need to free argv completely
-    int i;
-    for( i=0; i < size_args; i++ ){
-        kfree(argv[i]);
+    /* Deallocate everything */
+    kfree(user_argv);
+    for(idx=0; idx<=argc; idx++) {
+        kfree(argv[idx]);
     }
     kfree(argv);
+    kfree(program);
+    as_destroy(cur_addrspace);      /* destroy old addrspace */
 
 	/* Warp to user mode. */
-	md_usermode((int)size_args, (userptr_t)stack_ptr,
-		    stack_ptr, entrypoint);
+	md_usermode((int) argc, (userptr_t)stackptr, stackptr, entrypoint);
 	
 	/* md_usermode does not return */
 	panic("md_usermode returned\n");
-	return EINVAL;    
+	return EINVAL;
+
+execv_failed:
+    /* Deallocate everything */
+    for(idx=0; idx<=argc; idx++) {
+        kfree(argv[idx]);
+    }
+    kfree(argv);
+    kfree(program);
+    return err;
 }
+

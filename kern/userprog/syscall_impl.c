@@ -22,6 +22,7 @@
 
 /*
  * System call for write.
+ * 
  * Takes file descriptor, user mode buffer, and requested number of bytes as inputs
  * Returns err number. Returns the number of bytes written to retval. If write fails, return -1 through retval
  */
@@ -73,6 +74,7 @@ sys_write(int fd, const void *buf, size_t nbytes, int *retval)
 
 /*
  * System call for read.
+ * 
  * Calls kgets_sys_read which is located in kgets.c
  * System calls takes file descriptor, max buffer length, and return value pointer as arguments
  * Returns 0 if success and appropriate error code if error occurs. Retval variable returns -1 if failed, and the length of the read if successful
@@ -182,18 +184,25 @@ int sys___time(time_t *seconds, unsigned long *nanoseconds, time_t *retval)
 
 /*
  * System call for fork.
+ * 
  * As an input, it takes the entire trapframe from the exception. Using this trapframe, a new thread is created that
  * has identical states, but different memory space and file tables. 
  * File handle objects are, however, shared.
  * 
- * Returns pid of child process to caller
- * Returns 0 to child process
+ * Takes 1 parameter:
+ * 		The current hardware state of the process, aka the trapframe
  * 
- * Exact mechanism for return is to put the value into the return register
+ * Returns:
+ * 		1. pid of child process to caller
+ * 		2. function returns 0 to child process
+ *		Exact mechanism for return is to put the value into the return register
  *  
- * Possible errors:
+ * Valid error codes to return:
  * 		EAGAIN: Too many processes exist
  * 		ENOMEM: Not enough virtual memory to accomodate this process
+ * 
+ * Strategy for implementation:
+ * 		1. Call proc_fork()
  */
 int sys_fork(struct trapframe *tf, pid_t *ret_val) 
 {
@@ -209,30 +218,55 @@ int sys_fork(struct trapframe *tf, pid_t *ret_val)
 	return 0;
 }
 
-/* Get PID */
+
+/* 
+ * System call for getpid.
+ * 
+ * Straightforward enough, returns the curthread's pid
+ * getpid does not fail, hence does not return errors
+ */
 int sys_getpid(pid_t *retval) {
     *retval = curthread->t_pid;
     return 0;
 }
 
-/* System call for exit. */ 
-int sys__exit(int exitcode)
-{	
-	proc_exit(exitcode);
-	panic("Should not return from exit...EVER!!");
-	return 0;
-}
 
-/* System call for wait pid */
-int sys_waitpid(int pid, int *status, int options, int *retval)
+/* 
+ * System call for waitpid.
+ * 
+ * This system call is tied closely to the exit system call.
+ * This is because when a thread exits, it becomes a zombie. It is then up to the parent to reap
+ * its child process, thus removing it from the process table and recovering that process's exitcode
+ * 
+ * Takes 3 parameters:
+ * 		1. pid, must be one of this process's children, otherwise it is invalid
+ * 		2. *status, this is the pointer which we will copy the exitcode of the child process into.
+ * 		3. options, don't worry about this, just check to make sure it is 0
+ * 
+ * Returns:
+ * 		1. retval, returns -1 if pid passed in is not a child, status is not a valid pointer, or options is not 0
+ * 		   there are other cases, but those are just a few.
+ * 		2. function itsself returns the error code.
+ * 	
+ * Valid error codes to return:
+ * 		EINVAL	The options argument requested invalid or unsupported options.
+ * 		EFAULT	The status argument was an invalid pointer.			
+ * 
+ * Strategy for implementation:
+ * 		1. Check to make sure arguments are valid.
+ * 		2. Call proc_waitpid() to do the heavy lifting.
+ */
+pid_t sys_waitpid(pid_t pid, int *status, int options, int *retval)
 {
 	int exitcode;
+	int err;
+
 	if( options ){
 		*retval = -1;
 		return EINVAL;	
 	}
-	int err;
-	err = proc_wait(pid, &exitcode);
+
+	err = proc_waitpid(pid, &exitcode);
 	if( err ){
 		*retval = -1;
 		return err;
@@ -246,100 +280,149 @@ int sys_waitpid(int pid, int *status, int options, int *retval)
 		*retval = -1;
 		return err;
 	}
+
 	/* if no errors, return the pid */
 	*retval = pid;
 	return 0;
 }
 
+
+/* 
+ * System call for exit. 
+ * 
+ * Exit basically kills a thread and makes it a zombie.
+ * The last bit of information that remains is the exitcode, which the parent can retrieve
+ * through the waitpid system call. To communicate to a thread that is waiting
+ * there is a exitflag as well as a semaphore which signals waiters.
+ * 
+ * Takes one parameter:
+ * 		The exitcode
+ * 
+ * Returns:
+ * 		Should not return. If exit returns, then we panic...
+ * 
+ * Strategy for implementation:
+ * 		Call proc_exit()
+ */ 
+int sys__exit(int exitcode)
+{	
+	proc_exit(exitcode);
+	panic("Should not return from exit...EVER!!");
+	return 0;
+}
+
+
 /*
- * execv replaces currently executing program with a newly loaded program image
- * this occurs within one process; process id is unchanged
+ * System call for execv.
  * 
- * pathname of the program to run is passed as program
- * args is an array of 0-terminated strings; the array itself should be terminated by a NULL ptr
+ * Takes two parameters: 
+ * 		1. pointer to the string that represents the program path
+ * 		2. array of null terminated strings that hold the arguments of the program.
+ * 		   The array itsself should also be terminated by a NULL pointer
  * 
- * the argument strings should be copied into the new process as the new process' argv[] array
- * in the new process, argv[arg] must be NULL
+ * Returns two values only if execv fails:
+ * 		1. retval returns -1 if failed, otherwise exec should not return
+ * 		2. function returns errno to be handled by mips_syscall()
+ * 		NOTE: On success execv should NOT return as the next program is executing!
  * 
- * argv[0] in the new process contains the name that was used to invoke the program
- * this is not necessarily the same as program, and is only a convention and should not be enforced by the kernel
+ * Valid Error codes to be returned:
  * 
- * process file table and current workind directory are not modified by execv
- * 
- * Return values:
- * on success, nada, the new programming is executing
- * on failure, returns -1 and sets erro to:
- * ENODEV	The device prefix of program did not exist. - probabably done in proc_execv
- * ENOTDIR	A non-final component of program was not a directory. - probabably done in proc_execv
- * ENOENT	program did not exist. - here
+ * ENODEV	The device prefix of program did not exist.
+ * ENOTDIR	A non-final component of program was not a directory.
+ * ENOENT	program did not exist.
  * EISDIR	program is a directory. 
- * ENOEXEC	program is not in a recognizable executable file format, was for the wrong platform, or contained invalid fields. - proc
- * ENOMEM	Insufficient virtual memory is available. - proc
- * E2BIG	The total size of the argument strings is too large. - here
+ * ENOEXEC	program is not in a recognizable executable file format, was for the wrong platform, or contained invalid fields. 
+ * ENOMEM	Insufficient virtual memory is available.
+ * E2BIG	The total size of the argument strings is too large.
  * EIO	A hard I/O error occurred.
  * EFAULT	One of the args is an invalid pointer.
  * 
- */ 
-int sys_execv(const char *program, char **args, pid_t *retval){
-	int err = 0;
-	int actual_size; // does it need to be a pointer????
+ * Strategy for implementation:
+ * 		1. Arguments are copied from user space into kernel space and checked for validity
+ * 		2. Once arguments are valid, call proc_execv() to handle the rest
+ */
 
-	/* Check if program exists */
-	if( program == NULL ){
-		*retval = -1;
-		return ENOENT;
+/* Maximum program length */
+const int MAX_ARGLEN = 64;		// maximum number of characters in an argument
+const int MAX_ARGNUM = 32;		// maximum number of arguments
+
+int sys_execv(const char *user_program, char **args, pid_t *retval){
+	int err = 0; 		/* Error code, if exists */
+	int argc = 0;		/* Number of arguments, gotta count the length of args */
+	char **argv;		/* dynamically allocate the array once we have a grasp at what argc is */
+	char *program;		/* we have to copy the user_program string into program using copystr */
+
+	/* Check if user_program is valid */
+	program = kmalloc(MAX_ARGLEN*sizeof(char));	/* allocate kernel memory for program name, probably allocating too much, but that's fine */
+	int program_len = -1;
+	err = copyinstr( (const_userptr_t) user_program, program, MAX_ARGLEN, &program_len);
+	if(err) {
+		kfree(program);
+		goto execv_failed;
 	}
 
-	/* Check if one of the args is invalid */
-	if( args == NULL ){
-		*retval = -1;
-		return EFAULT;
+	/* Gotta pass badcall!! */
+	/* Check if arg contains at least one thing */
+	if(args == NULL) {
+		err = EFAULT;
+		goto execv_failed;
 	}
-	/* Check if pointer is valid */
-	char *valid_arr;
-	err = copyin( (const_userptr_t)args, (void *)&valid_arr, sizeof(char **));
-	if( err ){
-		*retval = -1; 
-		return err;
-	}
-	/* Size of args array */
-	int size_args = 0;
-	while ( args[size_args] != NULL ){
-		size_args = size_args + 1;
+	/* Check to see if args is a valid pointer */
+	char *test_valid_pointer;
+	err = copyin( (const_userptr_t)args, (void *)&test_valid_pointer, sizeof(char **) );
+	if(err) {
+		kfree(program);
+		goto execv_failed;
 	}
 
-	/* Get the length of the args array and use it for allocating space for the kernel array in which you will copy into */
-	char **argv = kmalloc( size_args * sizeof(char *));
-	int args_str, del_from;
+	/* generate argv */
+	argv = kmalloc(MAX_ARGNUM*sizeof(char *));
+	int arg_len;
+	int idx;
 
-	/* Copy the contents of the args array into argv */
-	for( args_str = 0; args_str < size_args; args_str++ ){
-		/* Allocate space for each string in argv array */
-		argv[args_str] = kmalloc(sizeof(char *) * (NAME_MAX + 1));
-		err = copyinstr(( const_userptr_t )program, argv[args_str], (NAME_MAX + 1), &actual_size); // add + 1 to name_max??
-		if( err ){
-			/* Free everything allocated until current args element (all of argv) and return failure*/
-			for( del_from = 0; del_from < args_str; del_from++ ){
-				kfree(argv[del_from]);
+	for(idx=0; idx<MAX_ARGNUM; idx++) {
+		if(args[idx] != NULL) {
+			argc++;
+			argv[idx] = kmalloc(MAX_ARGLEN*sizeof(char));
+			err = copyinstr( (const_userptr_t)args[idx], argv[idx], MAX_ARGLEN, &arg_len );
+
+			/* If there is an error, deallocate everything */
+			if(err) {
+				int temp;
+				for(temp=0; temp<=idx; temp++) {
+					kfree(argv[temp]);
+				}
+				kfree(argv);
+				kfree(program);
+				goto execv_failed;
+			}
+		} else {
+			argv[argc] = NULL;		/* Terminate argv with a null pointer */
+			break;
+		}
+		/* too many arguments? */
+		if(idx == MAX_ARGNUM-1) {
+			int temp;
+			for(temp=0; temp < MAX_ARGNUM; temp++) {
+				kfree(argv[temp]);
 			}
 			kfree(argv);
-			*retval = -1;
-			return err;
+			kfree(program);
+			err = E2BIG;
+			goto execv_failed;
 		}
 	}
+	assert(argv[argc] == NULL);		/* This must be true */
 	
-	char pathname_k[PATH_MAX];
-
-	/* Checks if the pathname exceeds pathname max length or if the pathname has run into the end of the userspace */
-	err = copyinstr(( const_userptr_t )program, pathname_k,  PATH_MAX, &actual_size);
-	if( err ){
-		*retval = -1;
-		return err;
+	/* argc and argv have been prepared properly, time to launch proc_execv */
+	err = proc_execv(program, argc, argv);
+	if(err) {
+		/* deallocation should be done inside proc_exec() */
+		goto execv_failed;
 	}
 
-	/* Create the new address space, loading the executable and other similar runprogram actions are done in proc_execv*/
-	err = proc_execv(pathname_k, argv, size_args);
-
-	return 0;
+execv_failed:
+	*retval = -1;
+	return err;
 }
 

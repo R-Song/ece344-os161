@@ -73,12 +73,9 @@ mips_syscall(struct trapframe *tf)
 	retval = 0;
 
 	switch (callno) {
+		/* General system calls */
 	    case SYS_reboot:
 			err = sys_reboot(tf->tf_a0);
-		break;
-	    /* Add stuff here */
-		case SYS__exit:
-			err = sys__exit( (int)tf->tf_a0 );
 		break;
 
 		case SYS_write:
@@ -97,6 +94,7 @@ mips_syscall(struct trapframe *tf)
 			err = sys___time( (time_t *)tf->tf_a0, (unsigned long *)tf->tf_a1, &retval );
 		break;
 
+		/* System calls related to processes */
 		case SYS_fork:
 			err = sys_fork( tf, &retval );
 		break;
@@ -107,6 +105,10 @@ mips_syscall(struct trapframe *tf)
 
 		case SYS_waitpid:
 			err = sys_waitpid( (int)tf->tf_a0, (int *)tf->tf_a1, (int)tf->tf_a2, &retval );
+		break;
+
+		case SYS__exit:
+			err = sys__exit( (int)tf->tf_a0 );
 		break;
 
 		case SYS_execv:

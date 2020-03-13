@@ -18,10 +18,9 @@ int sys_sleep(unsigned int seconds);
 
 int sys___time(time_t *seconds, unsigned long *nanoseconds, time_t *retval);
 
+
 /* System calls related to processes */
 int sys_fork(struct trapframe *tf, pid_t *retval);
-
-int sys_execv(const char *program, char **args, int *retval);
 
 int sys_getpid(pid_t *retval);
 

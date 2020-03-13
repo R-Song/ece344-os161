@@ -392,6 +392,7 @@ subpage_kmalloc(size_t sz)
 				assert(pr->nfree > 0);
 				fla = (vaddr_t)fl;
 				assert(fla - prpage < PAGE_SIZE);
+				//assert(fla >= prpage && fla <= (prpage + PAGE_SIZE)); // check double freeing
 				pr->freelist_offset = fla - prpage;
 			}
 			else {

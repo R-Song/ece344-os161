@@ -18,6 +18,7 @@
 #include "opt-sfs.h"
 #include "opt-net.h"
 #include <process.h>
+#include <machine/spl.h>
 
 #define _PATH_SHELL "/bin/sh"
 
@@ -702,11 +703,13 @@ void
 menu(char *args)
 {
 	char buf[64];
-
+	int spl;
 	menu_execute(args, 1);
 
 	while (1) {
+		spl = splhigh();
 		kprintf("OS/161 kernel [? for menu]: ");
+		splx(spl);
 		kgets(buf, sizeof(buf));
 		menu_execute(buf, 0);
 	}

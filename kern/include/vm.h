@@ -6,16 +6,14 @@
 
 /*
  * VM system-related definitions.
- *
- * You'll probably want to add stuff here.
+ * These functions act as the interface to the system's coremap and will be used in the kmalloc subroutines.
+ * After vm_bootstrap is called, everything in the system is based off of virtual memory!
  */
-
 
 /* Fault-type arguments to vm_fault() */
 #define VM_FAULT_READ        0    /* A read was attempted */
 #define VM_FAULT_WRITE       1    /* A write was attempted */
 #define VM_FAULT_READONLY    2    /* A write to a readonly page was attempted*/
-
 
 /* Initialization function */
 void vm_bootstrap(void);

@@ -391,7 +391,7 @@ file      userprog/syscall_impl.c
 # (you will probably want to add stuff here while doing the VM assignment)
 #
 
-file      vm/vm.c
+# file      vm/vm.c
 optofffile dumbvm   vm/addrspace.c
 
 #

@@ -1,3 +1,14 @@
+
+/*
+ * The non dumb version of os161 vm implementation. The functions in this file are called by
+ * kmalloc() and kfree() and are absolutely critical for the OS to function.
+ * In fact, the OS won't even boot if these are not implemented.
+ *
+ * Note! If OPT_DUMBVM is set, as is the case until you start the VM
+ * assignment, this file is not compiled or linked or in any way
+ * used. The cheesy hack versions in dumbvm.c are used instead.
+ */
+
 #include <types.h>
 #include <kern/errno.h>
 #include <lib.h>
@@ -9,29 +20,24 @@
 #include <machine/tlb.h>
 
 /*
- * Note! If OPT_DUMBVM is set, as is the case until you start the VM
- * assignment, this file is not compiled or linked or in any way
- * used. The cheesy hack versions in dumbvm.c are used instead.
+ *
  */
-
-/*
- * alloc_kpages() and free_kpages() are called by kmalloc() and thus the whole
- * kernel will not boot if these 2 functions are not completed.
- */
-
 void
 vm_bootstrap(void)
 {
 	/* do nothing */
 }
 
+/*
+ *
+ */
 vaddr_t 
 alloc_kpages(int npages)
 {
 	/*
 	 * Write this.
 	 */
-	 
+	
 	(void)npages;
 	return 0;
 }

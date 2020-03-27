@@ -361,10 +361,13 @@ thread_fork(const char *name,
  */
 int thread_join(struct thread * thread)
 {
-        // Replace this
-        clocksleep(5);
-        
-        (void)thread;  // suppress warning until code gets written
+        /* Call waitpid */
+		int err, exitcode;
+        err = proc_waitpid(thread->t_pid, &exitcode);
+		if(err) {
+			return err;
+		}
+
         return 0;
 }
 

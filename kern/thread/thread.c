@@ -362,8 +362,12 @@ thread_fork(const char *name,
 int thread_join(struct thread * thread)
 {
         // Replace this
-        clocksleep(5);
-        
+    	clocksleep(5);
+		/* Suspend exec of the current thread */
+		//thread_sleep(curthread->t_sleepaddr);
+        //while(thread->t_exitcode == 0);
+		//thread_wakeup(curthread->t_sleepaddr);
+
         (void)thread;  // suppress warning until code gets written
         return 0;
 }

@@ -129,3 +129,8 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	return 0;
 }
 
+// look up page table 
+// int
+// as_fault()
+
+

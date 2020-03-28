@@ -426,3 +426,28 @@ execv_failed:
 	return err;
 }
 
+/*
+ * The "break" is the end address of a process's heap region
+ * The sbrk call adjusts the "break" by the amount amount. It returns the old "break"
+ * 
+ * Returns:
+ *  On success, sbrk returns the previous value of the "break". 
+ *  On error, ((void *)-1) is returned, and errno is set according to the error encountered.
+ * 
+ * Valid errors to return:
+ * 	ENOMEM	Sufficient virtual memory to satisfy the request was not available, or the process has reached the limit of the memory it is allowed to allocate.
+ *  EINVAL	The request would move the "break" below its initial value.
+ * 
+ * Strategy for implementation:
+ * 	malloc calls sbrk, therefore should the system call CALL malloc?
+ */
+int sys_sbrk(intptr_t amount, pid_t *retval){
+	// amount should be negative, make sure heap_end+inc >= heap_start
+	
+	// round up amount by 4, to lower the chance of unaligned pointers
+	(void)amount;
+	(void)retval;
+	//return (void *)old_heap_end;
+	return 0;
+}
+

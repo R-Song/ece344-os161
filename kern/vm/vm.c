@@ -46,12 +46,32 @@ free_kpages(vaddr_t addr)
 	(void)addr;
 }
 
+/*
+ * Handles TLB faults
+ * 
+ * TLB faults occur when hardware does not know how to translate
+ * a virtual add since the translation is not present in any TLB entry
+ * 
+ */ 
 int
 vm_fault(int faulttype, vaddr_t faultaddress)
-{
-	/*
-	 * Definitely write this.
-	 */
+{	
+	/* DON'T USE KPRINTF() IN VM_FAULT() AFTER THE TLB WRITE!!!
+	 * 
+	 * Three types of faults:
+	 * VM_FAULT_READ
+	 * VM_FAULT_WRITE
+	 * VM_FAULT_READONLY
+	 * 
+	 * VPN is the search key used for parallel search 
+     */
+	
+	// Check if faultaddress is valid 
+	// User code or data segment; user heap between heap_start and heap_end; user stack
+	
+	// For READ and WRITE
+	// get the PTE of the faultaddress (walk current add space to that one ?) 
+	// & check PTE_P ( to see if the page actually exists)
 
 	(void)faulttype;
 	(void)faultaddress;

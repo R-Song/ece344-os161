@@ -18,39 +18,49 @@
 #include <vm.h>
 #include <machine/spl.h>
 #include <machine/tlb.h>
+#include <coremap.h>
 
 /*
- *
+ * vm_bootstrap()
+ * All the heavy lifting is done in coremap_bootstrap()
  */
 void
 vm_bootstrap(void)
 {
-	/* do nothing */
+	coremap_bootstrap();
+	//coremap_mutex_bootstrap(); /* This is actually called in main... I'm not sure why it works there but not here*/
 }
 
+
 /*
- *
+ * alloc_kpages()
+ * Allocate kernel pages. Kernel pages are direct mapped using the PADDR_TO_KVADDR macro
+ * Read the comments in coremap.h for more information.
  */
 vaddr_t 
 alloc_kpages(int npages)
-{
-	/*
-	 * Write this.
-	 */
-	
-	(void)npages;
-	return 0;
+{	
+	/* mark that we want the pages to be fixed and will be kernel pages */
+	paddr_t paddr = get_ppages(npages, 1, 1);
+	if(paddr == 0) {
+		return 0;
+	}
+	return PADDR_TO_KVADDR(paddr);
 }
 
+
+/*
+ * free_kpages()
+ * Map the virtual address to physical address and free it from the coremap
+ */
 void 
 free_kpages(vaddr_t addr)
 {
-	/*
-	 * Write this.
-	 */
-
-	(void)addr;
+	paddr_t paddr = addr - MIPS_KSEG0;
+	free_ppages(paddr);
 }
+
+
 
 int
 vm_fault(int faulttype, vaddr_t faultaddress)
@@ -63,3 +73,4 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	(void)faultaddress;
 	return 0;
 }
+

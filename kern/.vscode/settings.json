@@ -1,6 +1,9 @@
 {
     "files.associations": {
         "clock.h": "c",
-        "curthread.h": "c"
+        "curthread.h": "c",
+        "synch.h": "c",
+        "errno.h": "c",
+        "types.h": "c"
     }
 }

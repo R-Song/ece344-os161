@@ -6,6 +6,7 @@
  */
 
 #define PAGE_SIZE  4096		/* size of VM page */
+#define PAGE_OFFSET 12      /* 2^12 = 4096, for bit shifting */
 #define PAGE_FRAME 0xfffff000	/* mask for getting page number from addr */
 
 /*

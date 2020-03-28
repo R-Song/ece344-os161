@@ -18,6 +18,7 @@
 #include <version.h>
 
 #include <clock.h>
+#include <coremap.h>
 
 /*
  * These two pieces of data are maintained by the makefiles and build system.
@@ -91,6 +92,7 @@ boot(void)
 	thread_bootstrap();
 	vfs_bootstrap();
 	dev_bootstrap();
+	coremap_mutex_bootstrap();
 	kprintf_bootstrap();
 
 

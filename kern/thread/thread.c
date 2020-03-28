@@ -361,25 +361,13 @@ thread_fork(const char *name,
  */
 int thread_join(struct thread * thread)
 {
-<<<<<<< HEAD
-        // Replace this
-    	clocksleep(5);
-		/* Suspend exec of the current thread */
-		//thread_sleep(curthread->t_sleepaddr);
-        //while(thread->t_exitcode == 0);
-		//thread_wakeup(curthread->t_sleepaddr);
-
-        (void)thread;  // suppress warning until code gets written
-=======
-        /* Call waitpid */
-		int err, exitcode;
-        err = proc_waitpid(thread->t_pid, &exitcode);
-		if(err) {
-			return err;
-		}
-
->>>>>>> b961b3e9822b84efdd20a1be99a935333f5dfc0e
-        return 0;
+    /* Call waitpid */
+	int err, exitcode;
+    err = proc_waitpid(thread->t_pid, &exitcode);
+	if(err) {
+		return err;
+	}
+    return 0;
 }
 
 /*

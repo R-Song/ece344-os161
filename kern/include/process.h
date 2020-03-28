@@ -33,6 +33,8 @@ void    proc_destroy(struct thread *thread);
 /* Reaps the process with given pid, called by the parent */ 
 void    proc_reap(pid_t pid);
 
+/* Stat function for debugging */
+void    proc_stat();
 
 
 /********************************************************/

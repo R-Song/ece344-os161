@@ -45,6 +45,12 @@ alloc_kpages(int npages)
 	if(paddr == 0) {
 		return 0;
 	}
+
+	if(is_vm_init()) {
+		//kprintf("ALLOCATING %d PAGE(S)\n", npages);
+		//coremap_stat();
+	}
+
 	return PADDR_TO_KVADDR(paddr);
 }
 
@@ -55,9 +61,14 @@ alloc_kpages(int npages)
  */
 void 
 free_kpages(vaddr_t addr)
-{
+{	
 	paddr_t paddr = addr - MIPS_KSEG0;
 	free_ppages(paddr);
+
+	if(is_vm_init()) {
+		// kprintf("FREED FROM ADDR %x\n", addr);
+		//coremap_stat()
+	}
 }
 
 

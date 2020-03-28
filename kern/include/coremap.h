@@ -43,11 +43,14 @@ struct coremap_entry {
     /* for user pages, we care about the owner thread to ensure protection from other processes */
     struct thread *owner;
     
-    /* virtual page number */
-    int vpage_num;
-
     /* state of the physical page (ppage) */
     ppagestate_t state;
+
+    /* Is this page a kernel of user page? */
+    int is_kernel;
+
+    /* virtual page number */
+    int vpage_num;
 
     /* number of pages allocated. This number is only useful for the first page in a chain of allocated pages */
     int num_pages_allocated;
@@ -71,8 +74,11 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel);
 /* Deallocate a physical page */
 void free_ppages(paddr_t paddr);
 
+/* Debugging */
+void coremap_stat();
+int is_vm_init();
+
 /* Add more functions later to implement other state transitions, flush, write... */
 
 
 #endif /* _COREMAP_H_ */
-

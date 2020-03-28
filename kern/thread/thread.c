@@ -32,7 +32,7 @@ struct array *zombies;
 static int numthreads;
 
 /* Lock to help aid race condition between destroy and exit */
-static struct lock *thread_exit_lock;
+static struct semaphore *thread_exit_mutex;
 
 /*
  * Returns number of active threads
@@ -76,6 +76,8 @@ thread_create(const char *name)
 	}
 	/* lab3 code - end */
 
+	//kprintf("Created PID:%d\n", thread->t_pid);
+
 	return thread;
 }
 
@@ -85,12 +87,10 @@ thread_create(const char *name)
  * This function cannot be called in the victim thread's own context.
  * Freeing the stack you're actually using to run would be... inadvisable.
  */
-// previously static
 void
 thread_destroy(struct thread *thread)
 {
-	lock_acquire(thread_exit_lock);
-
+	assert(curspl>0);
 	assert(thread != curthread);
 
 	/* These things are cleaned up in thread_exit. */
@@ -104,8 +104,6 @@ thread_destroy(struct thread *thread)
 
 	kfree(thread->t_name);
 	kfree(thread);
-
-	lock_release(thread_exit_lock);
 }
 
 
@@ -118,19 +116,24 @@ void
 exorcise(void)
 {
 	int i;
-
 	assert(curspl>0);
-	
+
 	for (i=0; i<array_getnum(zombies); i++) {
 		struct thread *z = array_getguy(zombies, i);
 		assert(z!=curthread);
 		/* This has to be changed to accomodate processes */
-		if(z->t_ppid == 1 && z->t_adoptedflag == 1) {
+		// if(z->t_ppid == 1 && z->t_adoptedflag) {
+		// 	proc_destroy(z);
+		// 	thread_destroy(z);
+		// 	array_remove(zombies, i);
+		// 	i--;
+		// }
+		if(z->t_ppid == 1) {
 			proc_destroy(z);
 			thread_destroy(z);
 			array_remove(zombies, i);
 			i--;
-		}
+		}	
 	}
 }
 
@@ -201,9 +204,9 @@ thread_bootstrap(void)
 		panic("Cannot create zombies array\n");
 	}
 
-	thread_exit_lock = lock_create("thread exit lock");
-	if(thread_exit_lock == NULL) {
-		panic("Cant create thread exit lock");
+	thread_exit_mutex = sem_create("thread exit mutex", 1);
+	if(thread_exit_mutex == NULL) {
+		panic("Cant create thread exit mutex");
 	}
 
 	proc_bootstrap();
@@ -486,7 +489,7 @@ thread_exit(void)
 
 	splhigh();
 	
-	lock_acquire(thread_exit_lock);
+	P(thread_exit_mutex);
 
 	if (curthread->t_vmspace) {
 		/*
@@ -503,7 +506,11 @@ thread_exit(void)
 		curthread->t_cwd = NULL;
 	}
 
-	lock_release(thread_exit_lock);
+	/* Lab4 Code Begin */
+	// kprintf("PID:%d PPID:%d ADOPTED:%d - NOW EXITING \n",curthread->t_pid, curthread->t_ppid, curthread->t_adoptedflag);
+	/* Lab4 Code End */
+
+	V(thread_exit_mutex);
 
 	assert(numthreads>0);
 	numthreads--;
@@ -511,6 +518,7 @@ thread_exit(void)
 
 	panic("Thread came back from the dead!\n");
 }
+
 
 /*
  * Yield the cpu to another process, but stay runnable.

@@ -109,6 +109,7 @@ int proc_init(struct thread *child_thread) {
         child_thread->t_ppid = curthread->t_pid;
     }
 	child_thread->t_exitflag = 0; 
+    child_thread->t_adoptedflag = 0;
 	child_thread->t_exitcode = -25;
 
     /* Create locking device for wait_pid */
@@ -137,6 +138,8 @@ void proc_destroy(struct thread *thread) {
  * Only the parent of a process can reap it, so this is naturally called in proc_waitpid
  */
 void proc_reap(int pid){
+    assert(curspl>0);
+
     struct thread* to_reap = process_table[pid];
     assert(to_reap->t_pid == pid);
 
@@ -152,7 +155,21 @@ void proc_reap(int pid){
 	}
 }
 
-
+/* Function for debugging, prints entire process table */
+void proc_stat() {
+    int spl = splhigh();
+    int i;
+    int j=0;
+    for(i=0; i<MAX_PID; i++) {
+        kprintf("--PID:%d | PPID:%d--", i, process_table[i]->t_ppid);
+        if(j > 9){
+            kprintf("\n");
+            j=0;
+        }
+        j++;
+    }
+    splx(spl);
+}
 
 /********************************************************/
 /* Following functions are helpers for the system calls */

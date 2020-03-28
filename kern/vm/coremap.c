@@ -91,6 +91,10 @@ void coremap_mutex_bootstrap() {
         panic("coremap_mutex could not be created!!");
     }
 
+    // Print some stats
+    kprintf("INITIAL MEMORY STAT:\n");
+    coremap_stat();
+
     splx(spl);
 }
 
@@ -106,7 +110,7 @@ void coremap_mutex_bootstrap() {
  * is_kernel=1 means we are allocating a kernel page, meaning its virtual page number is directly mapped.
  */
 paddr_t get_ppages(int npages, int is_fixed, int is_kernel) 
-{
+{   
     /* local variables */
     int page_it = 0;
     int cnt = 0;
@@ -149,6 +153,8 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
                 coremap[i].state = S_DIRTY;
             }
 
+            coremap[i].is_kernel = is_kernel;
+
             if(is_kernel)
                 coremap[i].vpage_num = (PADDR_TO_KVADDR(i*PAGE_SIZE) >> PAGE_OFFSET);
             else {
@@ -190,7 +196,7 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
  * them when allocated them :) big brain.
  */
 void free_ppages(paddr_t paddr) 
-{
+{   
     int spl;
 
     /* Gain access to coremap with mutex if it exists, otherwise use interrupts */
@@ -211,8 +217,10 @@ void free_ppages(paddr_t paddr)
     /* Go through the coremap entries and free everything */
     int i;
     for(i=start_page; i<end_page; i++) {
+        assert(coremap[i].state != S_FREE);
         coremap[i].owner = NULL;
         coremap[i].state = S_FREE;
+        coremap[i].is_kernel = 0;
         coremap[i].vpage_num = 0;
         coremap[i].num_pages_allocated = 0;
     }
@@ -223,4 +231,45 @@ void free_ppages(paddr_t paddr)
         splx(spl);
     }
 }
+
+
+/*
+ * coremap_stat()
+ * Print all relevant information about the coremap for debugging
+ */
+void coremap_stat() {
+    int spl = splhigh();
+    int i;
+    int j = 0;
+    /* Print status of all pages */
+    kprintf("COREMAP STATUS DUMP:\n");
+    for(i=first_avail_ppage; i<last_avail_ppage; i++) {
+        kprintf("P%d: ", i);
+        if(coremap[i].state == S_FREE)
+            kprintf("FREE    ");
+        else if(coremap[i].state == S_DIRTY)
+            kprintf("DIRTY   ");
+        else if(coremap[i].state == S_FIXED)
+            kprintf("FIXED   ");
+        else if(coremap[i].state == S_CLEAN)
+            kprintf("CLEAN   ");
+
+        j++;
+
+        if(j>7) {
+            kprintf("\n");
+            j = 0;
+        }
+    }
+    kprintf("\n\n");
+
+    splx(spl);
+}
+int is_vm_init() {
+    if(coremap_mutex != NULL)
+        return 1;
+    else
+        return 0;
+}
+
 

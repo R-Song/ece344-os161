@@ -109,10 +109,11 @@ common_prog(int nargs, char **args)
 		kprintf("thread_fork failed: %s\n", strerror(result));
 		return result;
 	}
-	
+
 	/* return thread_join(thread); */
 	/* suspend execution of this thread until prog is done */
-	return proc_waitpid(thread->t_pid, &result);
+	proc_waitpid(thread->t_pid, &result);
+	return 0;
 }
 
 /*

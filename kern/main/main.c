@@ -18,6 +18,7 @@
 #include <version.h>
 
 #include <clock.h>
+#include <coremap.h>
 
 /*
  * These two pieces of data are maintained by the makefiles and build system.
@@ -72,13 +73,28 @@ boot(void)
 		GROUP_VERSION, buildconfig, buildversion);
 	kprintf("\n");
 
+	/* Old Ordering */
+	// ram_bootstrap();
+	// scheduler_bootstrap();
+	// thread_bootstrap();
+	// vfs_bootstrap();
+	// dev_bootstrap();
+	// vm_bootstrap();
+	// kprintf_bootstrap();
+
+	/* 
+	 * New ordering, note that we bootstrap vm right after RAM 
+	 * Having the coremap is essential to kmalloc(), which other structures depend on
+	 */
 	ram_bootstrap();
+	vm_bootstrap();
 	scheduler_bootstrap();
 	thread_bootstrap();
 	vfs_bootstrap();
 	dev_bootstrap();
-	vm_bootstrap();
+	coremap_mutex_bootstrap();
 	kprintf_bootstrap();
+
 
 	/* Default bootfs - but ignore failure, in case emu0 doesn't exist */
 	vfs_setbootfs("emu0");

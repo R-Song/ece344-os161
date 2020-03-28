@@ -74,8 +74,12 @@ void coremap_bootstrap()
 
     splx(spl); 
 }
+
+
 /* 
- * create the synchronization primitive for coremap.
+ * coremap_mutex_bootstrap()
+ * 
+ * Creates the synchronization primitive for coremap.
  * For some reason this doesn't work if its called in vm_bootstrap()... so I called it in main(), where it works fine
  * Hopefully the reason for this will become clear later...
  */
@@ -89,6 +93,7 @@ void coremap_mutex_bootstrap() {
 
     splx(spl);
 }
+
 
 /*
  * get_ppage()
@@ -176,6 +181,7 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
     
     return 0;
 }
+
 
 /*
  * free_ppages()

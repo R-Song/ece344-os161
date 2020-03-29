@@ -9,7 +9,7 @@
 #include <coremap.h>
 
 /* synchronization primitive for the coremap */
-static struct semaphore *coremap_mutex = NULL;
+// static struct semaphore *coremap_mutex = NULL;
 
 /* coremap structure, an array allocated at runtime */
 static struct coremap_entry *coremap = NULL;
@@ -83,20 +83,20 @@ void coremap_bootstrap()
  * For some reason this doesn't work if its called in vm_bootstrap()... so I called it in main(), where it works fine
  * Hopefully the reason for this will become clear later...
  */
-void coremap_mutex_bootstrap() {
-    int spl = splhigh();
+// void coremap_mutex_bootstrap() {
+//     int spl = splhigh();
 
-    coremap_mutex = sem_create("coremap mutex", 1);
-    if(coremap_mutex == NULL) {
-        panic("coremap_mutex could not be created!!");
-    }
+//     coremap_mutex = sem_create("coremap mutex", 1);
+//     if(coremap_mutex == NULL) {
+//         panic("coremap_mutex could not be created!!");
+//     }
 
-    // Print some stats
-    kprintf("INITIAL MEMORY STAT:\n");
-    coremap_stat();
+//     // Print some stats
+//     //kprintf("INITIAL MEMORY STAT:\n");
+//     // coremap_stat();
 
-    splx(spl);
-}
+//     splx(spl);
+// }
 
 
 /*
@@ -117,12 +117,14 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
     int space_avail = 0;
     int spl;
 
-    /* If semaphore is present, use that for synchronization, otherwise use interrupts */
-    if(coremap_mutex != NULL)
-        P(coremap_mutex);
-    else {
-        spl = splhigh();
-    }
+    // /* If semaphore is present, use that for synchronization, otherwise use interrupts */
+    // if(coremap_mutex != NULL)
+    //     P(coremap_mutex);
+    // else {
+    //     spl = splhigh();
+    // }
+
+    spl = splhigh();
 
     for(page_it=first_avail_ppage; page_it<last_avail_ppage; page_it++){
         /* check if space is available */
@@ -169,22 +171,26 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
         }
 
         /* return the physical address of the start page if successful */
-        if(coremap_mutex != NULL)
-            V(coremap_mutex);
-        else {
-            splx(spl);
-        }
+        // if(coremap_mutex != NULL)
+        //     V(coremap_mutex);
+        // else {
+        //     splx(spl);
+        // }
+
+        splx(spl);
 
         return (start_page*PAGE_SIZE);
     }
 
     /* Allocation failed */
-    if(coremap_mutex != NULL)
-        V(coremap_mutex);
-    else {
-        splx(spl);
-    }
-    
+    // if(coremap_mutex != NULL)
+    //     V(coremap_mutex);
+    // else {
+    //     splx(spl);
+    // }
+
+    splx(spl);
+
     return 0;
 }
 
@@ -200,11 +206,13 @@ void free_ppages(paddr_t paddr)
     int spl;
 
     /* Gain access to coremap with mutex if it exists, otherwise use interrupts */
-    if(coremap_mutex != NULL)
-        P(coremap_mutex);
-    else {
-        spl = splhigh();
-    }
+    // if(coremap_mutex != NULL)
+    //     P(coremap_mutex);
+    // else {
+    //     spl = splhigh();
+    // }
+
+    spl = splhigh();
 
     /* Get the start and end pages to free */
     int start_page = (paddr >> PAGE_OFFSET);
@@ -225,11 +233,13 @@ void free_ppages(paddr_t paddr)
         coremap[i].num_pages_allocated = 0;
     }
 
-    if(coremap_mutex != NULL)
-        V(coremap_mutex);
-    else {
-        splx(spl);
-    }
+    // if(coremap_mutex != NULL)
+    //     V(coremap_mutex);
+    // else {
+    //     splx(spl);
+    // }
+    
+    splx(spl);
 }
 
 
@@ -265,11 +275,11 @@ void coremap_stat() {
 
     splx(spl);
 }
-int is_vm_init() {
-    if(coremap_mutex != NULL)
-        return 1;
-    else
-        return 0;
-}
+// int is_vm_init() {
+//     if(coremap_mutex != NULL)
+//         return 1;
+//     else
+//         return 0;
+// }
 
 

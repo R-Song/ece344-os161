@@ -73,7 +73,7 @@ P(struct semaphore *sem)
 	 * complete the P without blocking.
 	 */
 	/* Shit falls apart if we make these assertions... why??? */
-	//assert(in_interrupt==0);
+	assert(in_interrupt==0);
 
 	spl = splhigh();
 	while (sem->count==0) {

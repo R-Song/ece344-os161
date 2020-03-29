@@ -116,7 +116,8 @@ void
 exorcise(void)
 {
 	int i;
-	assert(curspl>0);
+
+	//P(thread_exit_mutex);
 
 	for (i=0; i<array_getnum(zombies); i++) {
 		struct thread *z = array_getguy(zombies, i);
@@ -135,6 +136,8 @@ exorcise(void)
 			i--;
 		}	
 	}
+
+	//V(thread_exit_mutex);
 }
 
 /*
@@ -489,7 +492,7 @@ thread_exit(void)
 
 	splhigh();
 	
-	P(thread_exit_mutex);
+	//P(thread_exit_mutex);
 
 	if (curthread->t_vmspace) {
 		/*
@@ -510,7 +513,7 @@ thread_exit(void)
 	// kprintf("PID:%d PPID:%d ADOPTED:%d - NOW EXITING \n",curthread->t_pid, curthread->t_ppid, curthread->t_adoptedflag);
 	/* Lab4 Code End */
 
-	V(thread_exit_mutex);
+	//V(thread_exit_mutex);
 
 	assert(numthreads>0);
 	numthreads--;

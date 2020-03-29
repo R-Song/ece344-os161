@@ -92,7 +92,7 @@ boot(void)
 	thread_bootstrap();
 	vfs_bootstrap();
 	dev_bootstrap();
-	coremap_mutex_bootstrap();
+	// coremap_mutex_bootstrap();
 	kprintf_bootstrap();
 
 
@@ -114,7 +114,6 @@ static
 void
 shutdown(void)
 {
-
 	kprintf("Shutting down.\n");
 	
 	vfs_clearbootfs();

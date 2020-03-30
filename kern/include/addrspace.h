@@ -12,6 +12,20 @@ struct vnode;
  * You write this.
  */
 
+struct PTE {
+	vaddr_t as_vpage;
+	paddr_t as_ppage;
+	struct PTE *next;
+};
+
+struct region{
+	int size;
+	vaddr_t base_vaddr; 
+	int exec_flag;
+	int write_flag;
+	int read_flag;
+};
+
 struct addrspace {
 #if OPT_DUMBVM
 	vaddr_t as_vbase1;
@@ -23,6 +37,10 @@ struct addrspace {
 	paddr_t as_stackpbase;
 #else
 	/* Put stuff here for your VM system */
+	struct PTE *PTE_start;
+	struct region **array_regions;
+	vaddr_t heap_start;
+	vaddr_t heap_end;
 #endif
 };
 

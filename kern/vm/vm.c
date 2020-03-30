@@ -20,6 +20,7 @@
 #include <machine/tlb.h>
 #include <coremap.h>
 
+
 /*
  * vm_bootstrap()
  * All the heavy lifting is done in coremap_bootstrap()
@@ -28,7 +29,6 @@ void
 vm_bootstrap(void)
 {
 	coremap_bootstrap();
-	//coremap_mutex_bootstrap(); /* This is actually called in main... I'm not sure why it works there but not here*/
 }
 
 
@@ -46,11 +46,6 @@ alloc_kpages(int npages)
 		return 0;
 	}
 
-	// if(is_vm_init()) {
-	// 	//kprintf("ALLOCATING %d PAGE(S)\n", npages);
-	// 	//coremap_stat();
-	// }
-
 	return PADDR_TO_KVADDR(paddr);
 }
 
@@ -64,11 +59,6 @@ free_kpages(vaddr_t addr)
 {	
 	paddr_t paddr = addr - MIPS_KSEG0;
 	free_ppages(paddr);
-
-	// if(is_vm_init()) {
-	// 	// kprintf("FREED FROM ADDR %x\n", addr);
-	// 	//coremap_stat()
-	// }
 }
 
 

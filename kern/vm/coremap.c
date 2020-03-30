@@ -8,17 +8,24 @@
 #include <machine/spl.h>
 #include <coremap.h>
 
-/* synchronization primitive for the coremap */
-// static struct semaphore *coremap_mutex = NULL;
-
 /* coremap structure, an array allocated at runtime */
 static struct coremap_entry *coremap = NULL;
+
+/* synchronization primitive for the coremap */
+static struct semaphore *coremap_mutex = NULL;
 
 /* first available page. All pages up to and including the coremap are fixed, and should not be deallocated... */
 static int first_avail_ppage = 0;
 
 /* one after the last available page */
 static int last_avail_ppage = 0;
+
+/* flag to indicate whether or not to use mutex */
+static int use_mutex = 0; 
+/* 
+ * Currently mutex doesn't work, but I want to eventually use a synchronization primitive rather than interrupts... 
+ * Using the semaphore causes a hang in booting... not sure where the deadlock is coming from
+ */
 
 
 /*
@@ -31,7 +38,6 @@ static int last_avail_ppage = 0;
  *      (3) Allocate space for the coremap manually using physical address pointers
  *      (4) Create the coremap_mutex, kmalloc should work by this point
  */
-
 void coremap_bootstrap() 
 {
     int i;
@@ -44,8 +50,8 @@ void coremap_bootstrap()
     /* Total number of physical pages */
     int num_ppages = (lastpaddr >> PAGE_OFFSET);
 
-    /* Number of pages dedicated to fitting the coremap */
-    int num_coremap_pages = ( (num_ppages*sizeof(struct coremap_entry) + PAGE_SIZE) >> PAGE_OFFSET) ;
+    /* Number of pages dedicated to fitting the coremap and its mutex */
+    int num_coremap_pages = ( (num_ppages*sizeof(struct coremap_entry) + sizeof(struct semaphore) + PAGE_SIZE) >> PAGE_OFFSET) ;
 
     /* Initialize address of coremap */
     coremap = (struct coremap_entry *)PADDR_TO_KVADDR(firstpaddr);
@@ -68,35 +74,16 @@ void coremap_bootstrap()
         coremap[i].num_pages_allocated = 1;
     }
 
+    /* Initialize coremap_mutex */
+    coremap_mutex = (struct semaphore *)PADDR_TO_KVADDR(firstpaddr + num_ppages*sizeof(struct coremap_entry));
+	coremap_mutex->count = 1;
+
     /* save first and last pages */
     first_avail_ppage = num_fixed_pages;
     last_avail_ppage = num_ppages;
 
     splx(spl); 
 }
-
-
-/* 
- * coremap_mutex_bootstrap()
- * 
- * Creates the synchronization primitive for coremap.
- * For some reason this doesn't work if its called in vm_bootstrap()... so I called it in main(), where it works fine
- * Hopefully the reason for this will become clear later...
- */
-// void coremap_mutex_bootstrap() {
-//     int spl = splhigh();
-
-//     coremap_mutex = sem_create("coremap mutex", 1);
-//     if(coremap_mutex == NULL) {
-//         panic("coremap_mutex could not be created!!");
-//     }
-
-//     // Print some stats
-//     //kprintf("INITIAL MEMORY STAT:\n");
-//     // coremap_stat();
-
-//     splx(spl);
-// }
 
 
 /*
@@ -116,16 +103,15 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
     int cnt = 0;
     int space_avail = 0;
     int spl;
+    
+    /* get access to coremap using semapore or just disable interrupts */
+    if(!use_mutex) 
+        spl = splhigh();
+    else {
+        P(coremap_mutex);
+    }
 
-    // /* If semaphore is present, use that for synchronization, otherwise use interrupts */
-    // if(coremap_mutex != NULL)
-    //     P(coremap_mutex);
-    // else {
-    //     spl = splhigh();
-    // }
-
-    spl = splhigh();
-
+    /* loop through available pages and find consevutively free pages */
     for(page_it=first_avail_ppage; page_it<last_avail_ppage; page_it++){
         /* check if space is available */
         if(cnt == npages) {
@@ -170,27 +156,19 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
             }
         }
 
-        /* return the physical address of the start page if successful */
-        // if(coremap_mutex != NULL)
-        //     V(coremap_mutex);
-        // else {
-        //     splx(spl);
-        // }
-
-        splx(spl);
-
+        if(!use_mutex) 
+            splx(spl);
+        else {
+            V(coremap_mutex);
+        }
         return (start_page*PAGE_SIZE);
     }
 
-    /* Allocation failed */
-    // if(coremap_mutex != NULL)
-    //     V(coremap_mutex);
-    // else {
-    //     splx(spl);
-    // }
-
-    splx(spl);
-
+    if(!use_mutex) 
+        splx(spl);
+    else {
+        V(coremap_mutex);
+    }
     return 0;
 }
 
@@ -205,14 +183,12 @@ void free_ppages(paddr_t paddr)
 {   
     int spl;
 
-    /* Gain access to coremap with mutex if it exists, otherwise use interrupts */
-    // if(coremap_mutex != NULL)
-    //     P(coremap_mutex);
-    // else {
-    //     spl = splhigh();
-    // }
-
-    spl = splhigh();
+    /* get access to coremap using semapore or just disable interrupts */
+    if(!use_mutex) 
+        spl = splhigh();
+    else {
+        P(coremap_mutex);
+    }
 
     /* Get the start and end pages to free */
     int start_page = (paddr >> PAGE_OFFSET);
@@ -232,20 +208,18 @@ void free_ppages(paddr_t paddr)
         coremap[i].vpage_num = 0;
         coremap[i].num_pages_allocated = 0;
     }
-
-    // if(coremap_mutex != NULL)
-    //     V(coremap_mutex);
-    // else {
-    //     splx(spl);
-    // }
     
-    splx(spl);
+    if(!use_mutex) 
+        splx(spl);
+    else {
+        V(coremap_mutex);
+    }
 }
 
 
 /*
  * coremap_stat()
- * Print all relevant information about the coremap for debugging
+ * Print relevant information about the coremap for debugging
  */
 void coremap_stat() {
     int spl = splhigh();
@@ -275,11 +249,4 @@ void coremap_stat() {
 
     splx(spl);
 }
-// int is_vm_init() {
-//     if(coremap_mutex != NULL)
-//         return 1;
-//     else
-//         return 0;
-// }
-
 

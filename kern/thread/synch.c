@@ -72,7 +72,6 @@ P(struct semaphore *sem)
 	 * For robustness, always check, even if we can actually
 	 * complete the P without blocking.
 	 */
-	/* Shit falls apart if we make these assertions... why??? */
 	assert(in_interrupt==0);
 
 	spl = splhigh();

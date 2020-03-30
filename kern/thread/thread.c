@@ -76,8 +76,6 @@ thread_create(const char *name)
 	}
 	/* lab3 code - end */
 
-	//kprintf("Created PID:%d\n", thread->t_pid);
-
 	return thread;
 }
 
@@ -90,6 +88,8 @@ thread_create(const char *name)
 void
 thread_destroy(struct thread *thread)
 {
+	P(thread_exit_mutex);
+
 	assert(curspl>0);
 	assert(thread != curthread);
 
@@ -104,6 +104,8 @@ thread_destroy(struct thread *thread)
 
 	kfree(thread->t_name);
 	kfree(thread);
+
+	V(thread_exit_mutex);
 }
 
 
@@ -117,27 +119,21 @@ exorcise(void)
 {
 	int i;
 
-	//P(thread_exit_mutex);
-
 	for (i=0; i<array_getnum(zombies); i++) {
 		struct thread *z = array_getguy(zombies, i);
 		assert(z!=curthread);
-		/* This has to be changed to accomodate processes */
-		// if(z->t_ppid == 1 && z->t_adoptedflag) {
-		// 	proc_destroy(z);
-		// 	thread_destroy(z);
-		// 	array_remove(zombies, i);
-		// 	i--;
-		// }
-		if(z->t_ppid == 1 && z->t_adoptedflag == 0) {
+		/* 
+		 * Exorcise is called by init(pid1), we only want to reap our own children, not others! 
+		 * We should also refrain from destroying threads in interrupt handler. Exorcise can wait until
+		 * we are out of interrupts!
+		 */
+		if(z->t_ppid == 1 && z->t_adoptedflag == 0 && in_interrupt==0) {
 			proc_destroy(z);
 			thread_destroy(z);
 			array_remove(zombies, i);
 			i--;
 		}	
 	}
-
-	//V(thread_exit_mutex);
 }
 
 /*
@@ -156,7 +152,6 @@ thread_killall(void)
 	 * Move all sleepers to the zombie list, to be sure they don't
 	 * wake up while we're shutting down.
 	 */
-
 	for (i=0; i<array_getnum(sleepers); i++) {
 		struct thread *t = array_getguy(sleepers, i);
 		kprintf("sleep: Dropping thread %s\n", t->t_name);
@@ -253,6 +248,7 @@ thread_shutdown(void)
 	zombies = NULL;
 	// Don't do this - it frees our stack and we blow up
 	//thread_destroy(curthread);
+	proc_shutdown();
 }
 
 /*
@@ -492,7 +488,7 @@ thread_exit(void)
 
 	splhigh();
 	
-	//P(thread_exit_mutex);
+	P(thread_exit_mutex);
 
 	if (curthread->t_vmspace) {
 		/*
@@ -509,11 +505,7 @@ thread_exit(void)
 		curthread->t_cwd = NULL;
 	}
 
-	/* Lab4 Code Begin */
-	// kprintf("PID:%d PPID:%d ADOPTED:%d - NOW EXITING \n",curthread->t_pid, curthread->t_ppid, curthread->t_adoptedflag);
-	/* Lab4 Code End */
-
-	//V(thread_exit_mutex);
+	V(thread_exit_mutex);
 
 	assert(numthreads>0);
 	numthreads--;

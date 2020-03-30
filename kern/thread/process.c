@@ -24,7 +24,6 @@
 /*              process initialization, destruction, and reaping                            */
 /********************************************************************************************/
 
-
 /* constant for max number of threads */
 const int MAX_PID = 150;
 
@@ -33,6 +32,7 @@ struct thread **process_table;
 
 /* Redeclare zombies array used in thread.c */
 extern struct array *zombies;
+
 
 /* Initialize process table */
 void proc_bootstrap() 
@@ -48,6 +48,7 @@ void proc_bootstrap()
         process_table[index] = NULL;
     }
 }
+
 
 /* 
  * Add an entry - returns the PID, if no more PID's exist return EAGAIN. 
@@ -66,6 +67,7 @@ int proc_addentry(struct thread *thread, pid_t *retval)
     return EAGAIN;
 }
 
+
 /* Returns 1 if there is an available PID, 0 otherwise */
 int proc_pid_avail()
 {   
@@ -78,11 +80,13 @@ int proc_pid_avail()
     return 0;
 }
 
+
 /* Delete an entry from the process table */
 void proc_deleteentry(pid_t pid)
 {
     process_table[pid] = NULL;
 }
+
 
 /* 
  * Initialize thread fields pertaining to the process, this function is called in thread_create(), 
@@ -124,6 +128,7 @@ int proc_init(struct thread *child_thread) {
     return 0;
 }
 
+
 /* 
  * Destroy information related to the process 
  * We only do this when are reaping a process
@@ -132,6 +137,7 @@ void proc_destroy(struct thread *thread) {
     sem_destroy(thread->t_exitsem);
     proc_deleteentry(thread->t_pid);
 }
+
 
 /* 
  * Reap a process, remove it from process table as well as the zombie array
@@ -155,6 +161,13 @@ void proc_reap(int pid){
 	}
 }
 
+
+/* Shutdown process */
+void proc_shutdown() {
+    kfree(process_table);
+}
+
+
 /* Function for debugging, prints entire process table */
 void proc_stat() {
     int spl = splhigh();
@@ -171,10 +184,11 @@ void proc_stat() {
     splx(spl);
 }
 
+
+
 /********************************************************/
 /* Following functions are helpers for the system calls */
 /********************************************************/
-
 
 /* 
  * Helper function for sys_fork().

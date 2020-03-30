@@ -129,7 +129,7 @@ exorcise(void)
 		// 	array_remove(zombies, i);
 		// 	i--;
 		// }
-		if(z->t_ppid == 1) {
+		if(z->t_ppid == 1 && z->t_adoptedflag == 0) {
 			proc_destroy(z);
 			thread_destroy(z);
 			array_remove(zombies, i);

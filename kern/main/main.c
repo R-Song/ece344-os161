@@ -92,7 +92,6 @@ boot(void)
 	thread_bootstrap();
 	vfs_bootstrap();
 	dev_bootstrap();
-	// coremap_mutex_bootstrap();
 	kprintf_bootstrap();
 
 

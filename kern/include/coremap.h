@@ -65,18 +65,16 @@ struct coremap_entry {
  */
 
 /* Initialize coremap structure */
-void coremap_bootstrap();
-void coremap_mutex_bootstrap();
+void    coremap_bootstrap();
 
 /* Allocates a physical page if available */
 paddr_t get_ppages(int npages, int is_fixed, int is_kernel);
 
 /* Deallocate a physical page */
-void free_ppages(paddr_t paddr);
+void    free_ppages(paddr_t paddr);
 
 /* Debugging */
-void coremap_stat();
-int is_vm_init();
+void    coremap_stat();
 
 /* Add more functions later to implement other state transitions, flush, write... */
 

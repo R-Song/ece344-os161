@@ -4,6 +4,9 @@
 #include <addrspace.h>
 #include <vm.h>
 #include <coremap.h>
+#include <machine/tlb.h>
+#include <synch.h>
+#include <machine/spl.h>
 
 /*
  * Note! If OPT_DUMBVM is set, as is the case until you start the VM
@@ -14,6 +17,9 @@
 struct addrspace *
 as_create(void)
 {
+	/*
+	 * Not sure if we are to take in more args and set more precise parameters
+	 */
 	struct addrspace *as = kmalloc(sizeof(struct addrspace));
 	if (as==NULL) {
 		return NULL;
@@ -22,9 +28,9 @@ as_create(void)
 	as->heap_end = 0;
 	as->array_regions = NULL;
 	as->PTE_start = NULL;
-	/*
-	 * Initialize as needed.
-	 */
+	as->as_npages = 0; 
+	as->as_pbase = 0;
+
 	return as;
 }
 
@@ -37,7 +43,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	if (newas==NULL) {
 		return ENOMEM;
 	}
-	// set the flags according to the region of the address space
+	/* set the flags according to the region of the address space */
 	int is_fixed = 0;
 	int is_kernel = 0;
 	int total_npages;
@@ -48,17 +54,23 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	unsigned reg;
 	for(reg = 0; reg < sizeof(old->array_regions); reg++){
 		newas->array_regions[reg]->size = old->array_regions[reg]->size;
-		newas->array_regions[reg]->exec_flag = old->array_regions[reg]->exec_flag;
-		newas->array_regions[reg]->write_flag = old->array_regions[reg]->write_flag;
-		newas->array_regions[reg]->read_flag = old->array_regions[reg]->read_flag;
+		newas->array_regions[reg]->exec_new = old->array_regions[reg]->exec_new;
+		newas->array_regions[reg]->write_new = old->array_regions[reg]->write_new;
+		newas->array_regions[reg]->read_new = old->array_regions[reg]->read_new;
 		newas->array_regions[reg]->base_vaddr = old->array_regions[reg]->base_vaddr;
 		total_reg_size += old->array_regions[reg]->size;
 	}
+	/* This will NOT be needed IF we change as_create to take more args, not sure what they should be for now */
 	total_npages = (total_reg_size >> PAGE_OFFSET);
+	newas->as_npages = total_npages;
+	/* Get the first physical address*/
 	paddr_t first_paddr = get_ppages(total_npages, is_fixed, is_kernel);
+	if(first_paddr == 0){
+		return ENOMEM;
+	}
 	paddr_t cur_paddr = first_paddr;
-	
-	struct PTE *PTE_cur = NULL;
+	/**/
+	struct PTE *PTE_cur = NULL;   
 	struct PTE *PTE_iter = old->PTE_start;
 
 	PTE_cur = kmalloc(sizeof(struct PTE));
@@ -73,13 +85,18 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 			if(PTE_cur->next == NULL){
 				return ENOMEM;
 			}
+			PTE_cur->as_vpage = PTE_iter->as_vpage;
+			PTE_cur->as_ppage = cur_paddr;
 			PTE_cur = PTE_cur->next;
+			PTE_cur->next = NULL;
+			/* Copy old page from memory into the new page */
+			memmove((void *)PADDR_TO_KVADDR(PTE_cur->as_ppage), 
+				(const void *)PADDR_TO_KVADDR(PTE_iter->as_ppage),
+				PAGE_SIZE);
+
+			cur_paddr += PAGE_SIZE;
+			PTE_iter = PTE_iter->next;
 		}
-		// same virtual address, but not same physical one
-		PTE_cur->as_vpage = PTE_iter->as_vpage;
-		PTE_cur->as_ppage = cur_paddr;
-		PTE_cur->next = NULL;
-		cur_paddr += PAGE_SIZE;
 	}	
 
 	newas->heap_start = old->heap_start;
@@ -92,21 +109,46 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 void
 as_destroy(struct addrspace *as)
 {
-	/*
-	 * Clean up as needed.
-	 */
-	
+	/* Clean up Page Table */
+	struct PTE *curr_PTE = as->PTE_start;
+	while(as->PTE_start->next != NULL){
+		as->PTE_start = as->PTE_start->next;
+		curr_PTE->next = NULL;
+		kfree(curr_PTE);
+		curr_PTE = NULL;
+		curr_PTE = as->PTE_start;
+	}
+	/* Remove last non-NULL PTE */
+	curr_PTE = NULL;
+	kfree(as->PTE_start);
+	as->PTE_start = NULL;
+	/* Free the regions array */
+	unsigned i;
+	for (i = 0; i < sizeof(as->array_regions); i++){
+		kfree(as->array_regions[i]);
+		as->array_regions[i] = NULL;
+	}
+	kfree(as->array_regions);
+	as->array_regions = NULL;
+
 	kfree(as);
 }
 
 void
 as_activate(struct addrspace *as)
 {
-	/*
-	 * Write this.
-	 */
+	(void)as;
 
-	(void)as;  // suppress warning until code gets written
+	int spl;
+	int i;
+
+	spl = splhigh();
+	
+	for(i = 0; i < NUM_TLB; i++){
+		TLB_Write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+	}
+
+	splx(spl);
 }
 
 /*
@@ -139,22 +181,32 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 int
 as_prepare_load(struct addrspace *as)
 {
-	/*
-	 * Write this.
-	 */
-
-	(void)as;
+	//if (as==NULL) {
+	//	return -1;
+	//}
+	/* Set all permissions to 1 and save the old permissions */
+	unsigned reg;
+	for(reg = 0; reg < sizeof(as->array_regions); reg++){
+		as->array_regions[reg]->exec_old = as->array_regions[reg]->exec_new;
+		as->array_regions[reg]->exec_new = 1;
+		as->array_regions[reg]->read_old = as->array_regions[reg]->read_new;
+		as->array_regions[reg]->read_new = 1;
+		as->array_regions[reg]->write_old = as->array_regions[reg]->write_new;
+		as->array_regions[reg]->write_new = 1;
+	}
 	return 0;
 }
 
 int
 as_complete_load(struct addrspace *as)
 {
-	/*
-	 * Write this.
-	 */
-
-	(void)as;
+	/* Reset all permissions back to their OG values as before load */
+	unsigned reg;
+	for(reg = 0; reg < sizeof(as->array_regions); reg++){
+		as->array_regions[reg]->exec_new = as->array_regions[reg]->exec_old;
+		as->array_regions[reg]->read_new = as->array_regions[reg]->read_old;
+		as->array_regions[reg]->write_new = as->array_regions[reg]->write_old;
+	}
 	return 0;
 }
 

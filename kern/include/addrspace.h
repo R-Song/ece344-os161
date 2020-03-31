@@ -21,9 +21,16 @@ struct PTE {
 struct region{
 	int size;
 	vaddr_t base_vaddr; 
-	int exec_flag;
-	int write_flag;
-	int read_flag;
+	/* set of new+old flags used for as_prepare_load and as_complete_load 
+	 * won't be needed after changing the load_elf to be on demand
+	 */
+	int exec_new;
+	int write_new;
+	int read_new;
+
+	int exec_old;
+	int write_old;
+	int read_old;
 };
 
 struct addrspace {
@@ -41,6 +48,8 @@ struct addrspace {
 	struct region **array_regions;
 	vaddr_t heap_start;
 	vaddr_t heap_end;
+	paddr_t as_pbase;
+	size_t as_npages;
 #endif
 };
 

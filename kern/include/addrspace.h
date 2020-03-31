@@ -31,6 +31,8 @@ struct region{
 	int exec_old;
 	int write_old;
 	int read_old;
+
+	struct region *next;
 };
 
 struct addrspace {
@@ -45,7 +47,8 @@ struct addrspace {
 #else
 	/* Put stuff here for your VM system */
 	struct PTE *PTE_start;
-	struct region **array_regions;
+	//struct region **array_regions;
+	struct region *region_start;
 	vaddr_t heap_start;
 	vaddr_t heap_end;
 	paddr_t as_pbase;

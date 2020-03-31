@@ -26,7 +26,8 @@ as_create(void)
 	}
 	as->heap_start = 0;
 	as->heap_end = 0;
-	as->array_regions = NULL;
+	//as->array_regions = NULL;
+	as->region_start = NULL;
 	as->PTE_start = NULL;
 	as->as_npages = 0; 
 	as->as_pbase = 0;
@@ -34,6 +35,9 @@ as_create(void)
 	return as;
 }
 
+/*
+ * Probably need to free some stuff in case struct arrays are not populated in the old addresspace 
+ */ 
 int
 as_copy(struct addrspace *old, struct addrspace **ret)
 {
@@ -49,20 +53,63 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	int total_npages;
 	int total_reg_size = 0;
 
-	newas->array_regions = (struct region**)kmalloc(sizeof(old->array_regions) * sizeof(struct region*));
-	/* Calculate total npages from given regions of old as */
-	unsigned reg;
-	for(reg = 0; reg < sizeof(old->array_regions); reg++){
-		newas->array_regions[reg]->size = old->array_regions[reg]->size;
-		newas->array_regions[reg]->exec_new = old->array_regions[reg]->exec_new;
-		newas->array_regions[reg]->write_new = old->array_regions[reg]->write_new;
-		newas->array_regions[reg]->read_new = old->array_regions[reg]->read_new;
-		newas->array_regions[reg]->base_vaddr = old->array_regions[reg]->base_vaddr;
-		total_reg_size += old->array_regions[reg]->size;
+	// newas->array_regions = (struct region**)kmalloc(sizeof(old->array_regions) * sizeof(struct region*));
+	// /* Calculate total npages from given regions of old as */
+	// unsigned reg;
+	// for(reg = 0; reg < sizeof(old->array_regions); reg++){
+	// 	newas->array_regions[reg]->size = old->array_regions[reg]->size;
+	// 	newas->array_regions[reg]->exec_new = old->array_regions[reg]->exec_new;
+	// 	newas->array_regions[reg]->write_new = old->array_regions[reg]->write_new;
+	// 	newas->array_regions[reg]->read_new = old->array_regions[reg]->read_new;
+	// 	newas->array_regions[reg]->base_vaddr = old->array_regions[reg]->base_vaddr;
+	// 	total_reg_size += old->array_regions[reg]->size;
+	// }
+	// /* This will NOT be needed IF we change as_create to take more args, not sure what they should be for now */
+	// total_npages = (total_reg_size >> PAGE_OFFSET);
+	// newas->as_npages = total_npages;
+	
+	struct region *region_cur = NULL;
+	struct region *region_iter = old->region_start;
+
+	region_cur = kmalloc(sizeof(struct region));
+	if(region_cur == NULL){
+		return ENOMEM;
 	}
-	/* This will NOT be needed IF we change as_create to take more args, not sure what they should be for now */
+	if(region_iter == NULL){
+		kfree(region_cur);
+		region_cur = NULL;
+	}
+
+	newas->region_start = region_cur;
+
+	while(region_iter != NULL){
+		if(region_cur->next == NULL){
+			region_cur->next = kmalloc(sizeof(struct region));
+			if(region_cur->next == NULL){
+				return ENOMEM;
+			}
+			region_cur->size = region_iter->size;
+			total_reg_size += region_cur->size;
+			region_cur->base_vaddr = region_iter->base_vaddr;
+
+			region_cur->exec_new = region_iter->exec_new;
+			region_cur->exec_old = region_iter->exec_old;
+
+			region_cur->write_new = region_iter->write_new;
+			region_cur->write_old = region_iter->write_old;
+
+			region_cur->read_new = region_iter->read_new;
+			region_cur->read_old = region_iter->read_old;
+
+			region_cur = region_cur->next;
+			region_cur->next = NULL;
+			region_iter = region_iter->next;
+		}
+	} 
+
 	total_npages = (total_reg_size >> PAGE_OFFSET);
 	newas->as_npages = total_npages;
+
 	/* Get the first physical address*/
 	paddr_t first_paddr = get_ppages(total_npages, is_fixed, is_kernel);
 	if(first_paddr == 0){
@@ -122,14 +169,28 @@ as_destroy(struct addrspace *as)
 	curr_PTE = NULL;
 	kfree(as->PTE_start);
 	as->PTE_start = NULL;
+
+
 	/* Free the regions array */
-	unsigned i;
-	for (i = 0; i < sizeof(as->array_regions); i++){
-		kfree(as->array_regions[i]);
-		as->array_regions[i] = NULL;
+	struct region *curr_region = as->region_start;
+	while(as->region_start->next != NULL){
+		as->region_start = as->region_start->next;
+		curr_region->next = NULL;
+		kfree(curr_region);
+		curr_region = NULL;
+		curr_region = as->region_start;
 	}
-	kfree(as->array_regions);
-	as->array_regions = NULL;
+	curr_region = NULL;
+	kfree(as->region_start);
+	as->region_start = NULL;
+
+	// unsigned i;
+	// for (i = 0; i < sizeof(as->array_regions); i++){
+	// 	kfree(as->array_regions[i]);
+	// 	as->array_regions[i] = NULL;
+	// }
+	// kfree(as->array_regions);
+	// as->array_regions = NULL;
 
 	kfree(as);
 }
@@ -165,34 +226,68 @@ int
 as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 		 int readable, int writeable, int executable)
 {
-	/*
-	 * Write this.
-	 */
+	/* Dumbvm inspired first part */
+	size_t npages; 
+	int num_regions = 0; 	// I think there should be only two regions, code and data
 
-	(void)as;
-	(void)vaddr;
-	(void)sz;
-	(void)readable;
-	(void)writeable;
-	(void)executable;
-	return EUNIMP;
+	/* Align the region. First, the base... */
+	sz += vaddr & ~(vaddr_t)PAGE_FRAME;
+	vaddr &= PAGE_FRAME;
+
+	/* ...and now the length. */
+	sz = (sz + PAGE_SIZE - 1) & PAGE_FRAME;
+
+	npages = sz / PAGE_SIZE;
+
+	/* Add a region to the as struct given the above specs */
+	struct region *region_iter = as->region_start;
+	while(region_iter != NULL){
+		region_iter = region_iter->next;
+		num_regions++;
+	}
+	region_iter = kmalloc(sizeof(struct region));
+	num_regions++;
+	/* I think there should be only two regions, code and data */
+	if(num_regions > 2){
+		return EUNIMP;
+	}
+	region_iter->size = sz;
+	region_iter->base_vaddr = vaddr;
+	region_iter->exec_new = writeable;
+	region_iter->write_new = writeable;
+	region_iter->read_new = readable;
+	/* Not sure if the old flags should be set as the new ones here */
+	region_iter->exec_old = executable;
+	region_iter->write_old = writeable;
+	region_iter->read_old = readable;
+	region_iter->next = NULL;
+
+	return 0;
 }
 
 int
 as_prepare_load(struct addrspace *as)
 {
-	//if (as==NULL) {
-	//	return -1;
-	//}
 	/* Set all permissions to 1 and save the old permissions */
-	unsigned reg;
-	for(reg = 0; reg < sizeof(as->array_regions); reg++){
-		as->array_regions[reg]->exec_old = as->array_regions[reg]->exec_new;
-		as->array_regions[reg]->exec_new = 1;
-		as->array_regions[reg]->read_old = as->array_regions[reg]->read_new;
-		as->array_regions[reg]->read_new = 1;
-		as->array_regions[reg]->write_old = as->array_regions[reg]->write_new;
-		as->array_regions[reg]->write_new = 1;
+
+	// unsigned reg;
+	// for(reg = 0; reg < sizeof(as->array_regions); reg++){
+	// 	as->array_regions[reg]->exec_old = as->array_regions[reg]->exec_new;
+	// 	as->array_regions[reg]->exec_new = 1;
+	// 	as->array_regions[reg]->read_old = as->array_regions[reg]->read_new;
+	// 	as->array_regions[reg]->read_new = 1;
+	// 	as->array_regions[reg]->write_old = as->array_regions[reg]->write_new;
+	// 	as->array_regions[reg]->write_new = 1;
+	// }
+	struct region *curr_region = as->region_start;
+	while(curr_region!= NULL){
+		curr_region->exec_old = curr_region->exec_new;
+		curr_region->exec_new = 1;
+		curr_region->read_old = curr_region->read_new;
+		curr_region->read_new = 1;
+		curr_region->write_old = curr_region->write_new;
+		curr_region->write_new = 1;
+		curr_region = curr_region->next;
 	}
 	return 0;
 }
@@ -201,11 +296,19 @@ int
 as_complete_load(struct addrspace *as)
 {
 	/* Reset all permissions back to their OG values as before load */
-	unsigned reg;
-	for(reg = 0; reg < sizeof(as->array_regions); reg++){
-		as->array_regions[reg]->exec_new = as->array_regions[reg]->exec_old;
-		as->array_regions[reg]->read_new = as->array_regions[reg]->read_old;
-		as->array_regions[reg]->write_new = as->array_regions[reg]->write_old;
+
+	// unsigned reg;
+	// for(reg = 0; reg < sizeof(as->array_regions); reg++){
+	// 	as->array_regions[reg]->exec_new = as->array_regions[reg]->exec_old;
+	// 	as->array_regions[reg]->read_new = as->array_regions[reg]->read_old;
+	// 	as->array_regions[reg]->write_new = as->array_regions[reg]->write_old;
+	// }
+	struct region *curr_region = as->region_start;
+	while(curr_region!= NULL){
+		curr_region->exec_new = curr_region->exec_old;
+		curr_region->read_new = curr_region->read_old;
+		curr_region->write_new = curr_region->write_old;
+		curr_region = curr_region->next;
 	}
 	return 0;
 }

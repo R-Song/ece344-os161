@@ -2,59 +2,76 @@
 #define _ADDRSPACE_H_
 
 #include <vm.h>
+#include <pagetable.h>
 
 struct vnode;
 
 /* 
  * Address space - data structure associated with the virtual memory
  * space of a process.
- *
- * You write this.
  */
 
-struct PTE {
-	vaddr_t as_vpage;
-	paddr_t as_ppage;
-	struct PTE *next;
+/*
+ * Definition of as_region
+ * 
+ * 4 regions in the user address space: code, data, heap, and stack
+ * Each region has its own start address and size as well as a set of permissions
+ * Permission types: executable, writable, and readable.
+ * We keep new and old flags for now for some reason. We can get rid of them later if needed.
+ */
+struct as_region {
+	vaddr_t vbase;
+	size_t npages;
+
+	int exec_old, exec_new;
+	int write_old, write_new;
+	int read_old, read_new;
+	/* Will need a lot more information for ondemand paging */
+
 };
 
-struct region{
-	int size;
-	vaddr_t base_vaddr; 
-	/* set of new+old flags used for as_prepare_load and as_complete_load 
-	 * won't be needed after changing the load_elf to be on demand
-	 */
-	int exec_new;
-	int write_new;
-	int read_new;
 
-	int exec_old;
-	int write_old;
-	int read_old;
+/* Address space ID typdef */
+typedef unsigned asid_t;
 
-	struct region *next;
-};
 
+/*
+ * Definition of addrspace:
+ * 
+ * User processes are given virtual addresses ranging from: MIPS_KUSEG -> MIPS_KSEG0 (0x00000000 -> 0x80000000)
+ * In these address spaces, we need leave space for the following:
+ * 		(1) Code segment
+ * 		(2) Data segment
+ * 		(3) Heap
+ * 		(4) Stack
+ * 
+ * There are a few ways in that our VM system is different from DUMBVM
+ * 		(1) To support user level malloc(), we need allocate space for the heap
+ * 		(2) Vpages are mapped to Ppages using page tables, so each addrspace will need its own page table
+ * 		(3) Because of continuous swapping, we won't keep track of physical addresses as they can change 
+ * 			upon eviction of a page. Page tables can be referenced to do the address translation when needed.
+ */
 struct addrspace {
 #if OPT_DUMBVM
-	vaddr_t as_vbase1;
-	paddr_t as_pbase1;
-	size_t as_npages1;
-	vaddr_t as_vbase2;
-	paddr_t as_pbase2;
-	size_t as_npages2;
-	paddr_t as_stackpbase;
+	/* DUMBVM */
+	vaddr_t as_vbase1;		/* base vaddr of code segment */
+	paddr_t as_pbase1;		/* base paddr of code segment */
+	size_t as_npages1;		/* num_pages used by code segment */
+	vaddr_t as_vbase2;		/* base vaddr of data segment */
+	paddr_t as_pbase2;		/* base paddr of data segment */
+	size_t as_npages2;		/* num_pages used by data segment */
+	paddr_t as_stackpbase;	/* base paddr of stack */
 #else
-	/* Put stuff here for your VM system */
-	struct PTE *PTE_start;
-	//struct region **array_regions;
-	struct region *region_start;
-	vaddr_t heap_start;
-	vaddr_t heap_end;
-	paddr_t as_pbase;
-	size_t as_npages;
+	/* If gypsies moved into the VM business */
+	pagetable_t as_pagetable;
+	struct as_region *as_code;
+	struct as_region *as_data;
+	struct as_region *as_heap;
+	vaddr_t as_stackpbase;
+	/* Do we need an addrspace identifier?? */
 #endif
 };
+
 
 /*
  * Functions in addrspace.c:
@@ -89,20 +106,21 @@ struct addrspace {
  *                (Normally called *after* as_complete_load().) Hands
  *                back the initial stack pointer for the new process.
  */
-
 struct addrspace *as_create(void);
 int               as_copy(struct addrspace *src, struct addrspace **ret);
 void              as_activate(struct addrspace *);
 void              as_destroy(struct addrspace *);
 
 int               as_define_region(struct addrspace *as, 
-				   vaddr_t vaddr, size_t sz,
-				   int readable, 
-				   int writeable,
-				   int executable);
-int		  as_prepare_load(struct addrspace *as);
-int		  as_complete_load(struct addrspace *as);
+				   	vaddr_t vaddr, size_t sz,
+				   	int readable, 
+				   	int writeable,
+				   	int executable);
+
+int		  		  as_prepare_load(struct addrspace *as);
+int		  		  as_complete_load(struct addrspace *as);
 int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
+
 
 /*
  * Functions in loadelf.c

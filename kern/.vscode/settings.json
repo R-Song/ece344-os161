@@ -4,6 +4,8 @@
         "curthread.h": "c",
         "synch.h": "c",
         "errno.h": "c",
-        "types.h": "c"
+        "types.h": "c",
+        "cstring": "cpp",
+        "cstdlib": "cpp"
     }
 }

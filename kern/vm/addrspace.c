@@ -18,8 +18,11 @@
 #include <bitmap.h>
 
 
-/* current active address space */
+/* current active address space id */
 static asid_t curaddrspace;
+
+/* flag to indicate whether or not to check we should be checking for specific asids */
+static int curaddrspace_flag = 0;;
 
 /* synchronization primitive for the asid bitmap */
 static struct semaphore *as_bitmap_mutex = NULL;
@@ -29,8 +32,11 @@ static struct semaphore *as_bitmap_mutex = NULL;
  */
 void
 as_bitmap_bootstrap(void){
-	as_bitmap =  bitmap_create((u_int32_t)NUM_TLB);	
+	as_bitmap =  bitmap_create((u_int32_t)NUM_ASID);	
 	as_bitmap_mutex = sem_create("as bitmap mutex", 1);
+	if(as_bitmap == NULL || as_bitmap_mutex == NULL) {
+		panic("Address space bitmap could not be initialized");
+	} 
 }
 
 
@@ -41,8 +47,8 @@ as_bitmap_bootstrap(void){
 struct addrspace *
 as_create(void)
 {
-	u_int32_t index;
 	int err;
+	u_int32_t index;
 
 	/* A little bit redundant but the readability is worth it I think */
 	struct addrspace *as = (struct addrspace *)kmalloc(sizeof(struct addrspace));
@@ -80,17 +86,17 @@ as_create(void)
 		return NULL;
 	}
 
+	/* Attempt to get an available asid. If possible. */
 	P(as_bitmap_mutex);
 	err = bitmap_alloc(as_bitmap, &index);
 	if(err){
-		kfree(as->as_heap);
-		kfree(as->as_data);
-		kfree(as->as_code);
-		pt_destroy(as->as_pagetable);
-		kfree(as);
-		return NULL;	
+		as->as_asid = NUM_ASID; /* Set to invalid asid just in case */
+		as->as_asid_set = 0;	
 	}
-	as->asid = (asid_t)index;
+	else {
+		as->as_asid = index;
+		as->as_asid_set = 1;
+	}
 	V(as_bitmap_mutex);
 
 	/* Initialize everything */
@@ -114,10 +120,15 @@ void
 as_destroy(struct addrspace *as)
 {
 	assert(as != NULL);
-	/* Destroy the regions, pagetable, and as */
+
+	/* Give up the addrspace id */
 	P(as_bitmap_mutex);
-	bitmap_unmark(as_bitmap, (u_int32_t)as->asid);
+	if(as->as_asid_set) {
+		bitmap_unmark(as_bitmap, as->as_asid);
+	}
 	V(as_bitmap_mutex);
+
+	/* Destroy the regions, pagetable, and as */
 	kfree(as->as_code);
 	kfree(as->as_data);
 	kfree(as->as_heap);
@@ -136,7 +147,7 @@ int
 as_copy(struct addrspace *old, struct addrspace **ret)
 {
 	int err;
-	u_int32_t index;
+
 	/* Allocate space for new addrspace */
 	struct addrspace *new;
 	new = as_create();
@@ -152,8 +163,6 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	new->as_heap->vbase = old->as_heap->vbase;
 	new->as_heap->npages = old->as_heap->npages;
 
-	/* should we copy the flags?????? */
-
 	/* 
 	 * Copy entries to the page table
 	 * This is a deep copy, including all the pte entries. So the mappings for each page table
@@ -165,34 +174,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		return ENOMEM;
 	}
 
-	/* 
-	 * Call as_prepare_load()
-	 * This will do the copying of the page table as well as allocation of new pages 
-	 * This will be deprecated later when we do copy on write and load on demand
-	 * Later to support copy on write, we will probably have to have a dirty field in the page table
-	 */
-	err = as_prepare_load(new);
-	if(err) {
-		as_destroy(new);
-		return ENOMEM;
-	}
-
-	P(as_bitmap_mutex);
-	err = bitmap_alloc(as_bitmap, &index);
-	if(err){
-		as_destroy(new);
-		return err;	
-	}
-
-	new->asid = (asid_t)index; //index is a pointer, so is this done correctly, 
-							   //since new->asid is not a pointer?
-	V(as_bitmap_mutex);
-
-	/*
-	 * Copy contents of all pages
-	 * We do this by converting all physical pages to kernel addresses, then using memmove()
-	 * This part is a little confusing, but basically just finding each populated page in the page table.
-	 */
+	/* Set every single virtual address mapping to 0, this will change when we do copy on write */
 	vaddr_t i = 0;
 	while(1) {
 		/* Should never be a page with vaddr_t 0 */
@@ -200,12 +182,43 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		if(i==0) {
 			break; /* Been through all the pages */
 		}
-		assert(i < USERTOP); /* Should not ever increment over user virtual address space */
+		assert(i < USERTOP); /* Should not ever go over user virtual address space */
 
+		/* Allocate a physical page for this pte */
+		struct pte *entry = pt_get(new->as_pagetable, i);
+		entry->ppageaddr = 0;
+	}
+
+	/* 
+	 * Allocate a new physical page for every virtual page in the page table
+	 * This will be deprecated later when we do copy on write!
+	 */
+	while(1) {
+		/* Should never be a page with vaddr_t 0 */
+		i = pt_getnext(new->as_pagetable, i);
+		if(i==0) {
+			break; /* Been through all the pages */
+		}
+		assert(i < USERTOP); /* Should not ever go over user virtual address space */
+
+		/* Get PTE from old as and new as */
 		struct pte *old_entry = pt_get(old->as_pagetable, i);
 		struct pte *new_entry = pt_get(new->as_pagetable, i);
-		memmove((void *)PADDR_TO_KVADDR(old_entry->ppage), 
-				(const void *)PADDR_TO_KVADDR(new_entry->ppage),
+		assert(new_entry->ppageaddr == 0);
+
+		/* Allocate a page */
+		new_entry->ppageaddr = get_ppages(1, 0, 0); /* ask for 1 non-fixed user-page */
+		if(new_entry->ppageaddr == 0) {
+			as_destroy(new);
+			return ENOMEM;
+		}
+
+		/*
+		* Copy contents of all pages
+		* We do this by converting all physical pages to kernel addresses, then using memmove()
+		*/
+		memmove((void *)PADDR_TO_KVADDR(old_entry->ppageaddr), 
+				(const void *)PADDR_TO_KVADDR(new_entry->ppageaddr),
 				PAGE_SIZE);
 	}
 
@@ -216,32 +229,45 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 
 /*
  * as_prepare_load()
- * This function does the allocates pages for each of the virtual addresses in the page table
+ * This function sets up the page table and allocates all the pages
+ * This is called in load_elf()
+ * 
  * This function will most likely be deprecated when we start doing load on demand
  */ 
 int
 as_prepare_load(struct addrspace *as)
 {
 	/* 
-	 * Do page allocations. Loop through all existing pages in the 
-	 * page table and allocate a new phyiscal page for all of them.
+	 * We have to allocate memory for code and data segments
+	 * Do this by adding entries into the page table
 	 */
-	vaddr_t i = 0;
-	while(1) {
-		/* Should never be a page with vaddr_t 0 */
-		i = pt_getnext(as->as_pagetable, i);
-		if(i==0) {
-			break; /* Been through all the pages */
-		}
-		assert(i < USERTOP); /* Should not ever increment over user virtual address space */
+	unsigned i;
+	struct pte *entry;
+	vaddr_t addr;
 
-		/* Allocate a physical page for this pte */
-		struct pte *entry = pt_get(as->as_pagetable, i);
-		entry->ppage = get_ppages(1, 0, 0); /* ask for 1 non-fixed user-page */
-		if(entry->ppage == 0) {
+	/* Code segment */
+	for(i=0; i<as->as_code->npages; i++) {
+		entry = (struct pte *)kmalloc(sizeof(struct pte));
+		addr = (as->as_code->vbase + (i*PAGE_SIZE)); 
+		pt_add(as->as_pagetable, addr, entry);
+		/* Allocate a page for it */
+		entry->ppageaddr = get_ppages(1, 0, 0); /* Ask for one non-fixed user level page */	   
+		if(entry->ppageaddr == 0) {
+			return ENOMEM;	/* Don't destroy addrspace because curthread->t_vmspace is destroyed in thread_exit */
+		}
+	}
+	/* Data segment */
+	for(i=0; i<as->as_data->npages; i++) {
+		entry = (struct pte *)kmalloc(sizeof(struct pte));
+		addr = (as->as_data->vbase + (i*PAGE_SIZE)); 
+		pt_add(as->as_pagetable, addr, entry);
+		/* Allocate a page for it */
+		entry->ppageaddr = get_ppages(1, 0, 0);
+		if(entry->ppageaddr == 0) {
 			return ENOMEM;
 		}
 	}
+	/* Heap and stack have 0 pages at first, so we don't need to allocate anything for them */
 
 	/* Set permissions for the regions */
 	as->as_code->exec_old = as->as_code->exec_new;
@@ -268,7 +294,6 @@ as_prepare_load(struct addrspace *as)
 	as->as_heap->write_new = 1;
 	as->as_heap->read_new = 1;
 
-	
 	return 0;
 }
 
@@ -281,36 +306,58 @@ as_prepare_load(struct addrspace *as)
  * accompanied by a global variable that lets the kernel know what is the current address space, and what
  * TLB entries to look at upon a fault.
  * 
- * For now we will just invalidate entries, but later we should implement address space ID's.
+ * To be very careful, if we ever have to deal with addrspaces that were not allocated an ID we flush
+ * Duplicate entries in the TLB is a fatal fault.
+ * 
+ * This is untested. If it doesn't work, just switch to the default of invalidating everything
  */
 void
 as_activate(struct addrspace *as)
 {
-	//int spl;
-	int i;
-	int result;
+	int i, spl;
 
-	//spl = splhigh();
-	P(as_bitmap_mutex);
-	result = bitmap_isset(as_bitmap, (u_int32_t)as->asid);
-	/* If the asid is set in the bitmap, then set the global curr as to its asid and flush the rest of TLB*/
-	if(result){
-		curaddrspace = as->asid;
-		for(i = 0; i < NUM_TLB; i++){
-			if((int)curaddrspace != i){
-				TLB_Write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+	/* This area is critical as we are handling tlb as well as writing to curaddrspace globals */
+	spl = splhigh();
+
+	/* Handle all 4 cases, curaddrspace_flag lets us know if the previous addrspace had an ID or not */
+	if(curaddrspace_flag){
+		if(as->as_asid_set) {
+			curaddrspace = as->as_asid;
+			curaddrspace_flag = 1;
+			/* Invalidate all TLB entries by setting their valid bits to 0 */
+			for(i=0; i<NUM_TLB; i++) {
+				u_int32_t asid = TLB_ReadAsid(i);
+				if(asid != curaddrspace) {
+					TLB_WriteValid(i, 0); /* Set valid bit to 0 */
+				}
+				else {
+					TLB_WriteValid(i, 1); /* Entry belongs to us, set valid bit to 1 */
+				}
 			}
-		}	
-	}
-	/* If the asid is not set, set the global curr to -1 and flush the whole TLB*/
-	else{
-		curaddrspace = -1;
-		for(i = 0; i < NUM_TLB; i++){
-			TLB_Write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+		}
+		else {
+			curaddrspace = NUM_ASID; /* Set to invalid id just in case */
+			curaddrspace_flag = 0;	 /* Current address space doesn't have an ID */
+			/* Flush the TLB, can't risk duplicate entries in the TLB */
+			TLB_Flush();
 		}
 	}
-	V(as_bitmap_mutex);
-	//splx(spl);
+	else{
+		if(as->as_asid_set) {
+			curaddrspace = as->as_asid;
+			curaddrspace_flag = 1;
+			/* Even tho this addrspace has an ID, we can't risk duplicate entries from before, so flush */
+			TLB_Flush();
+		}
+		else {
+			curaddrspace = NUM_ASID; /* Set to invalid id just in case */
+			curaddrspace_flag = 0;	 /* Current address space doesn't have an ID */
+			/* Flush the TLB, can't risk duplicate entries in the TLB */
+			TLB_Flush();
+		}
+	}
+
+	splx(spl);
 }
 
 
@@ -328,13 +375,6 @@ int
 as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 		 int readable, int writeable, int executable)
 {
-	(void) as;
-	(void) vaddr;
-	(void) sz;
-	(void) readable;
-	(void) writeable;
-	(void) executable;
-	
 	/* Dumbvm inspired first part */
 	size_t npages; 
 
@@ -365,18 +405,8 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 		return 0;		
 	}
 
-	if(as->as_heap == 0){
-		as->as_heap->vbase = vaddr;
-		as->as_heap->npages = npages;
-		as->as_heap->exec_new = executable;
-		as->as_heap->write_new = writeable;
-		as->as_heap->read_new = readable;	
-		return 0;	
-	}
-
 	return 0;
 }
-
 
 
 int

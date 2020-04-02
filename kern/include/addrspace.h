@@ -37,7 +37,7 @@ struct as_region {
 
 
 /* Address space ID typdef */
-typedef unsigned asid_t;
+typedef u_int32_t asid_t;
 
 /*
  * Definition of addrspace:
@@ -72,7 +72,8 @@ struct addrspace {
 	struct as_region *as_data;
 	struct as_region *as_heap;
 	vaddr_t as_stackpbase;
-	asid_t asid;
+	asid_t as_asid;
+	int as_asid_set;
 #endif
 };
 
@@ -134,9 +135,13 @@ int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
  *    load_elf - load an ELF user program executable into the current
  *               address space. Returns the entry point (initial PC)
  *               in the space pointed to by ENTRYPOINT.
+ *    load_elf_od - load an ELF user program executable on demand.
+ * 					This means we don't allocate all the pages at once, only
+ * 					on page faults
  */
 
 int load_elf(struct vnode *v, vaddr_t *entrypoint);
+int load_elf_od(struct vnode *v, vaddr_t *entrypoint);
 
 
 #endif /* _ADDRSPACE_H_ */

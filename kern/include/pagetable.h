@@ -38,8 +38,11 @@ vaddr_t idx_to_vaddr(int first_idx, int second_idx);
  * right now just has physical mapping, but will need more fields later...
  */
 struct pte {
-	paddr_t ppage;
-    /* more fields to add */
+	paddr_t ppageaddr;
+    /* Tentative fields to add to support copy on write */
+    struct semaphore *pte_mutex; /* Mutual exclusion for this page */
+    int num_users;               /* How many users are reading from this page? */
+    int dirty;                   /* Is this page safe to write to */
 };
 
 /* pagetable definition */

@@ -31,6 +31,23 @@ void TLB_Write(u_int32_t entryhi, u_int32_t entrylo, u_int32_t index);
 void TLB_Read(u_int32_t *entryhi, u_int32_t *entrylo, u_int32_t index);
 int TLB_Probe(u_int32_t entryhi, u_int32_t entrylo);
 
+/* Read and write to ASID in TLBHI */
+u_int32_t TLB_ReadAsid(u_int32_t index);
+void TLB_WriteAsid(u_int32_t index, u_int32_t asid);
+
+/* Read and write to Valid and Dirty bits in TLBLO */
+/*
+ * Valid bit: If V=1, we are allowed to access it. If it is 0, we will trap into kernel
+ * Dirty bit: If D=1, we are allowed to write to it. If it is 0, we will trap into kernel
+ */
+int TLB_ReadValid(u_int32_t index);
+void TLB_WriteValid(u_int32_t index, int value);
+int TLB_ReadDirty(u_int32_t index);
+void TLB_WriteDirty(u_int32_t index, int value);
+
+/* Complete TLB flush */
+void TLB_Flush();
+
 /*
  * TLB entry fields.
  *
@@ -49,14 +66,14 @@ int TLB_Probe(u_int32_t entryhi, u_int32_t entrylo);
 
 /* Fields in the high-order word */
 #define TLBHI_VPAGE   0xfffff000
-/*      TLBHI_PID     0x00000fc0 */
+#define TLBHI_PID     0x00000fc0
 
 /* Fields in the low-order word */
 #define TLBLO_PPAGE   0xfffff000
 #define TLBLO_NOCACHE 0x00000800
 #define TLBLO_DIRTY   0x00000400
 #define TLBLO_VALID   0x00000200
-/*      TLBLO_GLOBAL  0x00000100 */
+#define TLBLO_GLOBAL  0x00000100
 
 /*
  * Values for completely invalid TLB entries. The TLB entry index should
@@ -69,8 +86,12 @@ int TLB_Probe(u_int32_t entryhi, u_int32_t entrylo);
 /*
  * Number of TLB entries in the processor.
  */
-
 #define NUM_TLB  64
+
+/*
+ * Other useful MD definitions
+ */
+#define NUM_ASID 64 /* This number depends on how many bits are available for address space id's. In this case if is 64 */
 
 
 #endif /* _MACHINE_TLB_H_ */

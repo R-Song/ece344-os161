@@ -1,9 +1,16 @@
 
 #include <types.h>
 #include <pagetable.h>
+#include <coremap.h>
 #include <lib.h>
 #include <kern/errno.h>
 #include <machine/vm.h>
+
+
+/*
+ * NOTE: Copy on write needs to implemented soon!!
+ * Also when destroying a page table, we need to know which pages to deallocated!!!! something I missed entirely...
+ */
 
 
 /* Machine dependant stuff */
@@ -41,6 +48,7 @@ pagetable_t pt_init()
 /* 
  * pt_add() 
  * Create second layer tables on demand. Return non-zero value on error
+ * We don't allocate memory for a pte here, do that before you call pt_add
  */
 int pt_add(pagetable_t pt, vaddr_t addr, struct pte *entry) 
 {
@@ -136,7 +144,7 @@ int pt_copy(pagetable_t src, pagetable_t dest) {
                     }
                     dest[i][j] = entry;
                     /* Copy over the pte fields */
-                    dest[i][j]->ppage = src[i][j]->ppage;
+                    dest[i][j]->ppageaddr = src[i][j]->ppageaddr;
                 }
             }
         }   
@@ -164,6 +172,10 @@ void pt_remove(pagetable_t pt, vaddr_t addr) {
 /*
  * pt_destroy()
  * Destroy page table as well all its entries
+ * This needs to be changed to deallocate the pages in the page table! 
+ * It gets complicated for copy on write... like how do u know when to destroy a page...
+ * 
+ * right now just destroy all the pages, no copy on write right now
  */
 void pt_destroy(pagetable_t pt) {
     int i, j;
@@ -174,12 +186,19 @@ void pt_destroy(pagetable_t pt) {
         else {
             for(j=0; j<PT_SECOND_LAYER_SIZE; j++) {
                 if(pt[i][j] != NULL) {
+                    /* Deallocate the pages */
+                    if(pt[i][j]->ppageaddr != 0){
+                        free_ppages(pt[i][j]->ppageaddr);
+                    }
+                    /* Deallocate the pte */
                     kfree(pt[i][j]);
                 }
             }
+            /* Deallocate layer 2 table */
             kfree(pt[i]);
         }
     }
+    /* Deallocate layer 1 table */
     kfree(pt);
 }
 

@@ -22,7 +22,7 @@ void          *bitmap_getdata(struct bitmap *);
 int            bitmap_alloc(struct bitmap *, u_int32_t *index);
 void           bitmap_mark(struct bitmap *, u_int32_t index);
 void           bitmap_unmark(struct bitmap *, u_int32_t index);
-int	       bitmap_isset(struct bitmap *, u_int32_t index);
+int	           bitmap_isset(struct bitmap *, u_int32_t index);
 void           bitmap_destroy(struct bitmap *);
 
 #endif /* _BITMAP_H_ */

@@ -184,7 +184,15 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 			return result;
 		}
 	}
+	/* Now we have to initialize the heap */
+	struct addrspace *as = curthread->t_vmspace;
+	as->as_heap->vbase = (as->as_data->vbase + (as->as_data->npages)*PAGE_SIZE); /* Heap starts after data segment */
+	as->as_heap->npages = 0;
+	as->as_heap->exec_new = 0;	/* Heap is not for executing */
+	as->as_heap->write_new = 1; /* Can read */
+	as->as_heap->read_new = 1;	/* Can write */
 
+	/* This does all the page allocations at once! This will have to change when we load on demand... */
 	result = as_prepare_load(curthread->t_vmspace);
 	if (result) {
 		return result;
@@ -193,7 +201,6 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 	/*
 	 * Now actually load each segment.
 	 */
-
 	for (i=0; i<eh.e_phnum; i++) {
 		off_t offset = eh.e_phoff + i*eh.e_phentsize;
 		mk_kuio(&ku, &ph, sizeof(ph), offset, UIO_READ);
@@ -237,3 +244,9 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 
 	return 0;
 }
+
+
+
+
+
+

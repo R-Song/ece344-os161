@@ -16,6 +16,7 @@ file        arch/mips/mips/syscall.c		# System call handler
 file        arch/mips/mips/threadstart.S	# Entry code for new threads
 file        arch/mips/mips/trap.c		# Trap (exception) handler
 file        arch/mips/mips/tlb_mips1.S		# TLB handling routines
+file        arch/mips/mips/tlb.c        # Higher level TLB handling
 
 file        ../lib/libc/mips-setjmp.S		# setjmp/longjmp
 

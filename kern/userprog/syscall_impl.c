@@ -443,11 +443,14 @@ execv_failed:
  */
 int sys_sbrk(intptr_t amount, pid_t *retval){
 	// amount should be negative, make sure heap_end+inc >= heap_start
-	
-	// round up amount by 4, to lower the chance of unaligned pointers
+	struct addrspace *cur_as = thread_getas();
+	vaddr_t old_heap_end;
+	old_heap_end = cur_as->as_heap->vbase + ((cur_as->as_heap->npages) * PAGE_SIZE); // -1 or smth?
+	/* round up amount by 4, to lower the chance of unaligned pointers */
+
 	(void)amount;
 	(void)retval;
 	//return (void *)old_heap_end;
+	//*retval = ((void *)-1);
 	return 0;
 }
-

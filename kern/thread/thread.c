@@ -659,3 +659,15 @@ mi_threadstart(void *data1, unsigned long data2,
 	/* Done. */
 	thread_exit();
 }
+
+struct addrspace *
+thread_getas(void){
+	struct addrspace *as;
+	struct thread *cur_thread = curthread;
+	if(cur_thread == NULL){
+		return NULL;
+	}
+
+	as = cur_thread->t_vmspace;
+	return as;
+}

@@ -151,5 +151,7 @@ void mi_threadstart(void *data1, unsigned long data2,
 /* Machine dependent context switch. */
 void md_switch(struct pcb *old, struct pcb *nu);
 
+/* Used to retrieve the addrspace of the current thread */
+struct addrspace *thread_getas(void);
 
 #endif /* _THREAD_H_ */

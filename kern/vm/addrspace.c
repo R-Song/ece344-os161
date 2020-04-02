@@ -413,4 +413,10 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 // int
 // as_fault()
 
+//struct addrspace *
+//as_get_by_asid(asid_t curr_asid){
+//
+//}
+
+
 

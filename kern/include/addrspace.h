@@ -3,8 +3,13 @@
 
 #include <vm.h>
 #include <pagetable.h>
+#include <bitmap.h>
+
 
 struct vnode;
+
+/* bitmap for maintaining ASIDs */
+struct bitmap *as_bitmap;
 
 /* 
  * Address space - data structure associated with the virtual memory
@@ -33,7 +38,6 @@ struct as_region {
 
 /* Address space ID typdef */
 typedef unsigned asid_t;
-
 
 /*
  * Definition of addrspace:
@@ -68,14 +72,16 @@ struct addrspace {
 	struct as_region *as_data;
 	struct as_region *as_heap;
 	vaddr_t as_stackpbase;
-	/* Do we need an addrspace identifier?? */
+	asid_t asid;
 #endif
 };
 
 
 /*
  * Functions in addrspace.c:
- *
+ *    
+ *    as_bitmap_bootstrap - initializes the bitmap for ASIDs and 
+ * 							  the mutex for the structure
  *    as_create - create a new empty address space. You need to make 
  *                sure this gets called in all the right places. You
  *                may find you want to change the argument list. May
@@ -106,6 +112,7 @@ struct addrspace {
  *                (Normally called *after* as_complete_load().) Hands
  *                back the initial stack pointer for the new process.
  */
+void              as_bitmap_bootstrap(void);
 struct addrspace *as_create(void);
 int               as_copy(struct addrspace *src, struct addrspace **ret);
 void              as_activate(struct addrspace *);

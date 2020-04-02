@@ -15,10 +15,23 @@
 #include <synch.h>
 #include <machine/spl.h>
 #include <pagetable.h>
+#include <bitmap.h>
 
 
 /* current active address space */
 static asid_t curaddrspace;
+
+/* synchronization primitive for the asid bitmap */
+static struct semaphore *as_bitmap_mutex = NULL;
+
+/* 
+ * Create the addrspace ASID bitmap 
+ */
+void
+as_bitmap_bootstrap(void){
+	as_bitmap =  bitmap_create((u_int32_t)NUM_TLB);	
+	as_bitmap_mutex = sem_create("as bitmap mutex", 1);
+}
 
 
 /*
@@ -28,6 +41,9 @@ static asid_t curaddrspace;
 struct addrspace *
 as_create(void)
 {
+	u_int32_t index;
+	int err;
+
 	/* A little bit redundant but the readability is worth it I think */
 	struct addrspace *as = (struct addrspace *)kmalloc(sizeof(struct addrspace));
 	if (as==NULL) {
@@ -64,6 +80,19 @@ as_create(void)
 		return NULL;
 	}
 
+	P(as_bitmap_mutex);
+	err = bitmap_alloc(as_bitmap, &index);
+	if(err){
+		kfree(as->as_heap);
+		kfree(as->as_data);
+		kfree(as->as_code);
+		pt_destroy(as->as_pagetable);
+		kfree(as);
+		return NULL;	
+	}
+	as->asid = (asid_t)index;
+	V(as_bitmap_mutex);
+
 	/* Initialize everything */
 	as->as_code->vbase = 0;
 	as->as_code->npages = 0;
@@ -86,6 +115,9 @@ as_destroy(struct addrspace *as)
 {
 	assert(as != NULL);
 	/* Destroy the regions, pagetable, and as */
+	P(as_bitmap_mutex);
+	bitmap_unmark(as_bitmap, (u_int32_t)as->asid);
+	V(as_bitmap_mutex);
 	kfree(as->as_code);
 	kfree(as->as_data);
 	kfree(as->as_heap);
@@ -104,6 +136,7 @@ int
 as_copy(struct addrspace *old, struct addrspace **ret)
 {
 	int err;
+	u_int32_t index;
 	/* Allocate space for new addrspace */
 	struct addrspace *new;
 	new = as_create();
@@ -143,6 +176,17 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		as_destroy(new);
 		return ENOMEM;
 	}
+
+	P(as_bitmap_mutex);
+	err = bitmap_alloc(as_bitmap, &index);
+	if(err){
+		as_destroy(new);
+		return err;	
+	}
+
+	new->asid = (asid_t)index; //index is a pointer, so is this done correctly, 
+							   //since new->asid is not a pointer?
+	V(as_bitmap_mutex);
 
 	/*
 	 * Copy contents of all pages
@@ -200,7 +244,29 @@ as_prepare_load(struct addrspace *as)
 	}
 
 	/* Set permissions for the regions */
+	as->as_code->exec_old = as->as_code->exec_new;
+	as->as_code->write_old = as->as_code->write_new;
+	as->as_code->read_old = as->as_code->read_new;
 
+	as->as_code->exec_new = 1;
+	as->as_code->write_new = 1;
+	as->as_code->read_new = 1;
+
+	as->as_data->exec_old = as->as_data->exec_new;
+	as->as_data->write_old = as->as_data->write_new;
+	as->as_data->read_old = as->as_data->read_new;
+
+	as->as_data->exec_new = 1;
+	as->as_data->write_new = 1;
+	as->as_data->read_new = 1;	
+
+	as->as_heap->exec_old = as->as_heap->exec_new;
+	as->as_heap->write_old = as->as_heap->write_new;
+	as->as_heap->read_old = as->as_heap->read_new;
+
+	as->as_heap->exec_new = 1;
+	as->as_heap->write_new = 1;
+	as->as_heap->read_new = 1;
 
 	
 	return 0;
@@ -220,19 +286,31 @@ as_prepare_load(struct addrspace *as)
 void
 as_activate(struct addrspace *as)
 {
-	(void) as;
-	(void) curaddrspace;
-
-	int spl;
+	//int spl;
 	int i;
+	int result;
 
-	spl = splhigh();
-	
-	for(i = 0; i < NUM_TLB; i++){
-		TLB_Write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+	//spl = splhigh();
+	P(as_bitmap_mutex);
+	result = bitmap_isset(as_bitmap, (u_int32_t)as->asid);
+	/* If the asid is set in the bitmap, then set the global curr as to its asid and flush the rest of TLB*/
+	if(result){
+		curaddrspace = as->asid;
+		for(i = 0; i < NUM_TLB; i++){
+			if((int)curaddrspace != i){
+				TLB_Write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+			}
+		}	
 	}
-
-	splx(spl);
+	/* If the asid is not set, set the global curr to -1 and flush the whole TLB*/
+	else{
+		curaddrspace = -1;
+		for(i = 0; i < NUM_TLB; i++){
+			TLB_Write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+		}
+	}
+	V(as_bitmap_mutex);
+	//splx(spl);
 }
 
 
@@ -256,44 +334,47 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 	(void) readable;
 	(void) writeable;
 	(void) executable;
+	
+	/* Dumbvm inspired first part */
+	size_t npages; 
+
+	/* Align the region. First, the base... */
+	sz += vaddr & ~(vaddr_t)PAGE_FRAME;
+	vaddr &= PAGE_FRAME;
+
+	/* ...and now the length. */
+	sz = (sz + PAGE_SIZE - 1) & PAGE_FRAME;
+
+	npages = sz / PAGE_SIZE;
+
+	if(as->as_code == 0){
+		as->as_code->vbase = vaddr;
+		as->as_code->npages = npages;
+		as->as_code->exec_new = executable;
+		as->as_code->write_new = writeable;
+		as->as_code->read_new = readable;
+		return 0;		
+	}
+
+	if(as->as_data == 0){
+		as->as_data->vbase = vaddr;
+		as->as_data->npages = npages;
+		as->as_data->exec_new = executable;
+		as->as_data->write_new = writeable;
+		as->as_data->read_new = readable;
+		return 0;		
+	}
+
+	if(as->as_heap == 0){
+		as->as_heap->vbase = vaddr;
+		as->as_heap->npages = npages;
+		as->as_heap->exec_new = executable;
+		as->as_heap->write_new = writeable;
+		as->as_heap->read_new = readable;	
+		return 0;	
+	}
+
 	return 0;
-	// /* Dumbvm inspired first part */
-	// size_t npages; 
-	// int num_regions = 0; 	// I think there should be only two regions, code and data
-
-	// /* Align the region. First, the base... */
-	// sz += vaddr & ~(vaddr_t)PAGE_FRAME;
-	// vaddr &= PAGE_FRAME;
-
-	// /* ...and now the length. */
-	// sz = (sz + PAGE_SIZE - 1) & PAGE_FRAME;
-
-	// npages = sz / PAGE_SIZE;
-
-	// /* Add a region to the as struct given the above specs */
-	// struct region *region_iter = as->region_start;
-	// while(region_iter != NULL){
-	// 	region_iter = region_iter->next;
-	// 	num_regions++;
-	// }
-	// region_iter = kmalloc(sizeof(struct region));
-	// num_regions++;
-	// /* I think there should be only two regions, code and data */
-	// if(num_regions > 2){
-	// 	return EUNIMP;
-	// }
-	// region_iter->size = sz;
-	// region_iter->base_vaddr = vaddr;
-	// region_iter->exec_new = writeable;
-	// region_iter->write_new = writeable;
-	// region_iter->read_new = readable;
-	// /* Not sure if the old flags should be set as the new ones here */
-	// region_iter->exec_old = executable;
-	// region_iter->write_old = writeable;
-	// region_iter->read_old = readable;
-	// region_iter->next = NULL;
-
-	// return 0;
 }
 
 
@@ -302,31 +383,24 @@ int
 as_complete_load(struct addrspace *as)
 {
 	/* Reset all permissions back to their OG values as before load */
+	as->as_code->exec_new = as->as_code->exec_old;
+	as->as_code->write_new = as->as_code->write_old;
+	as->as_code->read_new = as->as_code->read_old;
 
-	// unsigned reg;
-	// for(reg = 0; reg < sizeof(as->array_regions); reg++){
-	// 	as->array_regions[reg]->exec_new = as->array_regions[reg]->exec_old;
-	// 	as->array_regions[reg]->read_new = as->array_regions[reg]->read_old;
-	// 	as->array_regions[reg]->write_new = as->array_regions[reg]->write_old;
-	// }
-	// struct region *curr_region = as->region_start;
-	// while(curr_region!= NULL){
-	// 	curr_region->exec_new = curr_region->exec_old;
-	// 	curr_region->read_new = curr_region->read_old;
-	// 	curr_region->write_new = curr_region->write_old;
-	// 	curr_region = curr_region->next;
-	// }
-	(void) as;
+	as->as_data->exec_new = as->as_data->exec_old;
+	as->as_data->write_new = as->as_data->write_old;
+	as->as_data->read_new = as->as_data->read_old;
+
+	as->as_heap->exec_new = as->as_heap->exec_old;
+	as->as_heap->write_new = as->as_heap->write_old;
+	as->as_heap->read_new = as->as_heap->read_old;
+
 	return 0;
 }
 
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
-	/*
-	 * Write this.
-	 */
-
 	(void)as;
 
 	/* Initial user-level stack pointer */

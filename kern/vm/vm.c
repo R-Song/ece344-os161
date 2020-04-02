@@ -29,6 +29,7 @@ void
 vm_bootstrap(void)
 {
 	coremap_bootstrap();
+	as_bitmap_bootstrap();
 }
 
 

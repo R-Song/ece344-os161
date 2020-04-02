@@ -45,7 +45,6 @@ struct pte {
 /* pagetable definition */
 typedef struct pte*** pagetable_t;     
 
-
 /* initialize a new page table */
 pagetable_t pt_init();
 

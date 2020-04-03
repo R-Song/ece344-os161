@@ -87,7 +87,7 @@ int TLB_ReadDirty(u_int32_t index)
 
 void TLB_WriteDirty(u_int32_t index, int value)
 {
-   int spl = splhigh();
+    int spl = splhigh();
 
     assert(value == 0 || value == 1);
     u_int32_t entryhi, entrylo;

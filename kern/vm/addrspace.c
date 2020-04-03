@@ -22,7 +22,7 @@
 static asid_t curaddrspace;
 
 /* flag to indicate whether or not to check we should be checking for specific asids */
-static int curaddrspace_flag = 0;;
+static int curaddrspace_flag = 0;
 
 /* synchronization primitive for the asid bitmap */
 static struct semaphore *as_bitmap_mutex = NULL;

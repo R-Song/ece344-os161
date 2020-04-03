@@ -30,7 +30,6 @@ int sys__exit(int exitcode);
 
 int sys_execv(const char *program, char **args, pid_t *retval);
 
-/* lab 4 code start */
 int sys_sbrk(intptr_t amount, pid_t *retval);
-/* lab 4 code end */
+
 #endif /* _SYSCALL_H_ */

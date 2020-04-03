@@ -19,6 +19,8 @@
 #include <curthread.h>
 #include <process.h>
 #include <addrspace.h>
+#include <pagetable.h>
+#include <coremap.h>
 
 /*
  * System call for write.
@@ -442,15 +444,42 @@ execv_failed:
  * 	malloc calls sbrk, therefore should the system call CALL malloc?
  */
 int sys_sbrk(intptr_t amount, pid_t *retval){
-	// amount should be negative, make sure heap_end+inc >= heap_start
 	struct addrspace *cur_as = thread_getas();
 	vaddr_t old_heap_end;
-	old_heap_end = cur_as->as_heap->vbase + ((cur_as->as_heap->npages) * PAGE_SIZE); // -1 or smth?
-	/* round up amount by 4, to lower the chance of unaligned pointers */
+	old_heap_end = cur_as->as_heap->vbase + ((cur_as->as_heap->npages) * PAGE_SIZE); 
 
-	(void)amount;
-	(void)retval;
-	//return (void *)old_heap_end;
-	//*retval = ((void *)-1);
+	/* round up amount by 4, to lower the chance of unaligned pointers */
+	amount = amount/PAGE_SIZE + PAGE_SIZE;   // / or >> ??
+	intptr_t heap_size = (intptr_t)(cur_as->as_heap->npages * PAGE_SIZE);
+	/* if amount is negative, ensure heap_end does not go past heap_start */
+	if( (heap_size + amount) <= 0 ){
+		//*retval = ((void *)-1);     // they want to return this type but there are conflicts
+								      // when I try to use it, pls advise
+		*retval = -1;
+		return EINVAL;	
+	} 
+
+	int i, orig_pages, amount_pages;
+	struct pte *entry;
+	vaddr_t addr;
+
+	amount_pages = (int)(amount/PAGE_SIZE);
+	orig_pages = (int)cur_as->as_heap->npages;
+	
+	for(i=0; i<amount_pages; i++){
+		entry = (struct pte *)kmalloc(sizeof(struct pte));
+		addr = (cur_as->as_heap->vbase + ((i+orig_pages)*PAGE_SIZE)); 
+		pt_add(cur_as->as_pagetable, addr, entry);
+		/* Allocate a page for it */
+		entry->ppageaddr = get_ppages(1, 0, 0);   
+		if(entry->ppageaddr == 0) {
+			//*retval = ((void *)-1);
+			*retval = -1;
+			return ENOMEM;	
+		}	
+	}
+	cur_as->as_heap->npages += (size_t)amount_pages;
+	//*retval = (void *)old_heap_end;
+	*retval = old_heap_end;
 	return 0;
 }

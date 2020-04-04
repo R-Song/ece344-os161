@@ -250,7 +250,7 @@ as_prepare_load(struct addrspace *as)
 
 	/* Code segment */
 	for(i=0; i<as->as_code->npages; i++) {
-		entry = (struct pte *)kmalloc(sizeof(struct pte));
+		entry = pte_init();
 		addr = (as->as_code->vbase + (i*PAGE_SIZE)); 
 		pt_add(as->as_pagetable, addr, entry);
 		/* Allocate a page for it */
@@ -261,7 +261,7 @@ as_prepare_load(struct addrspace *as)
 	}
 	/* Data segment */
 	for(i=0; i<as->as_data->npages; i++) {
-		entry = (struct pte *)kmalloc(sizeof(struct pte));
+		entry = pte_init();
 		addr = (as->as_data->vbase + (i*PAGE_SIZE)); 
 		pt_add(as->as_pagetable, addr, entry);
 		/* Allocate a page for it */

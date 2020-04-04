@@ -198,7 +198,7 @@ void free_ppages(paddr_t paddr)
     }
     assert(start_page>=first_avail_ppage && end_page<last_avail_ppage);
 
-    /* Go through the coremap entries and free everything */
+    /* Go through the coremap entries and free neccessary entries */
     int i;
     for(i=start_page; i<end_page; i++) {
         assert(coremap[i].state != S_FREE);

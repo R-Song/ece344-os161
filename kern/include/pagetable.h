@@ -45,8 +45,14 @@ struct pte {
     int dirty;                   /* Is this page safe to write to */
 };
 
+/* create and destroy a pte */
+struct pte *pte_init();
+void pte_destroy(struct pte *entry); 
+
+
 /* pagetable definition */
 typedef struct pte*** pagetable_t;     
+
 
 /* initialize a new page table */
 pagetable_t pt_init();

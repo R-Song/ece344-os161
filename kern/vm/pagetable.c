@@ -3,6 +3,7 @@
 #include <pagetable.h>
 #include <coremap.h>
 #include <lib.h>
+#include <synch.h>
 #include <kern/errno.h>
 #include <machine/vm.h>
 
@@ -23,6 +24,29 @@ int pt_vaddr_to_second_index(vaddr_t addr) {
 }
 vaddr_t idx_to_vaddr(int first_idx, int second_idx) {
     return ( (first_idx << (PAGE_OFFSET+10)) | (second_idx << PAGE_OFFSET) );
+}
+
+/* pte_init() */
+struct pte *pte_init() 
+{
+    struct pte *entry = kmalloc(sizeof(struct pte));
+    if(entry == NULL) {
+        return NULL;
+    }
+    entry->pte_mutex = sem_create("pte mutex", 1);
+    if(entry->pte_mutex == NULL) {
+        kfree(entry);
+        return NULL;
+    }
+    entry->num_users = 0;
+    return entry;
+}
+
+/* pte_destroy() */
+void pte_destroy(struct pte *entry) 
+{
+    kfree(entry->pte_mutex);
+    kfree(entry);
 }
 
 
@@ -137,7 +161,7 @@ int pt_copy(pagetable_t src, pagetable_t dest) {
                 if(src[i][j] == NULL)
                     continue;
                 else {
-                    entry = kmalloc(sizeof(struct pte));
+                    entry = pte_init();
                     if(entry == NULL) {
                         return ENOMEM;
                     }
@@ -187,10 +211,10 @@ void pt_destroy(pagetable_t pt) {
                 if(pt[i][j] != NULL) {
                     /* Deallocate the pages */
                     if(pt[i][j]->ppageaddr != 0){
-                        free_ppages(pt[i][j]->ppageaddr);
+                        free_ppages(pt[i][j]->ppageaddr);   /* Free the physical page mapping */
                     }
                     /* Deallocate the pte */
-                    kfree(pt[i][j]);
+                    pte_destroy(pt[i][j]);
                 }
             }
             /* Deallocate layer 2 table */

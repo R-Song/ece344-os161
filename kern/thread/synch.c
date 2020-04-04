@@ -78,6 +78,7 @@ P(struct semaphore *sem)
 	while (sem->count==0) {
 		thread_sleep(sem);
 	}
+
 	assert(sem->count>0);
 	sem->count--;
 	splx(spl);

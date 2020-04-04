@@ -39,6 +39,7 @@ struct pte *pte_init()
         return NULL;
     }
     entry->num_users = 0;
+    entry->ppageaddr = 0;
     return entry;
 }
 
@@ -47,6 +48,14 @@ void pte_destroy(struct pte *entry)
 {
     kfree(entry->pte_mutex);
     kfree(entry);
+}
+
+/* pte_copy() */
+void pte_copy(struct pte *src, struct pte *dest) 
+{
+    dest->ppageaddr = src->ppageaddr;
+    dest->dirty = dest->dirty;
+    dest->permissions = src->permissions;
 }
 
 
@@ -167,7 +176,7 @@ int pt_copy(pagetable_t src, pagetable_t dest) {
                     }
                     dest[i][j] = entry;
                     /* Copy over the pte fields */
-                    dest[i][j]->ppageaddr = src[i][j]->ppageaddr;
+                    pte_copy(src[i][j], dest[i][j]);
                 }
             }
         }   
@@ -187,7 +196,7 @@ void pt_remove(pagetable_t pt, vaddr_t addr) {
         return;
     }
 
-    kfree(pt[first_layer_idx][second_layer_idx]);
+    pte_destroy(pt[first_layer_idx][second_layer_idx]);
     pt[first_layer_idx][second_layer_idx] = NULL;
 }
 

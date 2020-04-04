@@ -12,7 +12,7 @@
 u_int32_t dbflags = 0;
 
 /* Lock for non-polled kprintfs */
-static struct lock *kprintf_lock;
+static struct semaphore *kprintf_mutex;
 
 /*
  * Warning: all this has to work from interrupt handlers and when
@@ -38,11 +38,11 @@ console_send(void *junk, const char *data, size_t len)
 void
 kprintf_bootstrap(void)
 {
-	assert(kprintf_lock == NULL);
+	assert(kprintf_mutex == NULL);
 
-	kprintf_lock = lock_create("kprintf_lock");
-	if (kprintf_lock == NULL) {
-		panic("Could not create kprintf lock\n");
+	kprintf_mutex = sem_create("kprintf_mutex", 1);
+	if (kprintf_mutex == NULL) {
+		panic("Could not create kprintf mutex\n");
 	}
 }
 
@@ -53,16 +53,16 @@ kprintf(const char *fmt, ...)
 	int chars;
 	va_list ap;
 
-	if (kprintf_lock != NULL && !in_interrupt && curspl==0) {
-		lock_acquire(kprintf_lock);
+	if (kprintf_mutex != NULL && !in_interrupt && curspl==0) {
+		P(kprintf_mutex);
 	}
 
 	va_start(ap, fmt);
 	chars = __vprintf(console_send, NULL, fmt, ap);
 	va_end(ap);
 
-	if (kprintf_lock != NULL && !in_interrupt && curspl==0) {
-		lock_release(kprintf_lock);
+	if (kprintf_mutex != NULL && !in_interrupt && curspl==0) {
+		V(kprintf_mutex);
 	}
 
 	return chars;

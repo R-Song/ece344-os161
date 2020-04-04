@@ -102,6 +102,8 @@ common_prog(int nargs, char **args)
 		"synchronization-problems kernel.\n");
 #endif
 
+	int spl = splhigh();
+
 	result = thread_fork(args[0] /* thread name */,
 			args /* thread arg */, nargs /* thread arg */,
 			cmd_progthread, &thread);
@@ -109,6 +111,9 @@ common_prog(int nargs, char **args)
 		kprintf("thread_fork failed: %s\n", strerror(result));
 		return result;
 	}
+	thread->t_waitflag = 1;
+	
+	splx(spl);
 
 	/* return thread_join(thread); */
 	/* suspend execution of this thread until prog is done */

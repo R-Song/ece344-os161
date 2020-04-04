@@ -1,20 +1,18 @@
-#ifndef _ADDRSPACE_H_
-#define _ADDRSPACE_H_
-
-#include <vm.h>
-#include <pagetable.h>
-#include <bitmap.h>
-
-
-struct vnode;
-
-/* bitmap for maintaining ASIDs */
-struct bitmap *as_bitmap;
 
 /* 
  * Address space - data structure associated with the virtual memory
  * space of a process.
  */
+
+#ifndef _ADDRSPACE_H_
+#define _ADDRSPACE_H_
+
+#include <vm.h>
+#include <pagetable.h>
+#include <permissions.h>
+
+
+struct vnode;
 
 /*
  * Definition of as_region
@@ -27,12 +25,8 @@ struct bitmap *as_bitmap;
 struct as_region {
 	vaddr_t vbase;
 	size_t npages;
-
-	int exec_old, exec_new;
-	int write_old, write_new;
-	int read_old, read_new;
+	permissions_t permissions;
 	/* Will need a lot more information for ondemand paging */
-
 };
 
 
@@ -67,12 +61,12 @@ struct addrspace {
 	paddr_t as_stackpbase;	/* base paddr of stack */
 #else
 	/* If gypsies moved into the VM business */
-	pagetable_t as_pagetable;
-	struct as_region *as_code;
+	pagetable_t as_pagetable;	/* page table */
+	struct as_region *as_code;	/* data segments */
 	struct as_region *as_data;
 	struct as_region *as_heap;
-	vaddr_t as_stackpbase;
-	asid_t as_asid;
+	struct as_region *as_stack;
+	asid_t as_asid;				/* addrspace tags for the TLB */
 	int as_asid_set;
 #endif
 };

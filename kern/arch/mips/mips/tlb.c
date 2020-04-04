@@ -111,3 +111,23 @@ void TLB_Flush()
     
     splx(spl);
 }
+
+/*
+ * TLB_Replace()
+ * Implements our own replacement policy for TLB.
+ */
+int TLB_Replace(u_int32_t entryhi, u_int32_t entrylo)
+{
+    int spl, idx;
+
+    spl = splhigh();
+
+    TLB_Random(entryhi, entrylo);
+    idx = TLB_Probe(entryhi, entrylo);
+    assert(idx >= 0);
+
+    splx(spl);
+    return idx;
+}
+
+

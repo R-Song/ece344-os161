@@ -17,6 +17,8 @@
 #ifndef _PAGETABLE_H_
 #define _PAGETABLE_H_
 
+#include <permissions.h>
+
 /*
  * Machine dependant stuff
  * Hardcoded sizes of the first and second layer. Really depends on the machine.
@@ -31,7 +33,6 @@ int pt_vaddr_to_first_index(vaddr_t addr);
 int pt_vaddr_to_second_index(vaddr_t addr);
 vaddr_t idx_to_vaddr(int first_idx, int second_idx);
 
-
 /*
  * page table entry (pte)
  * 
@@ -43,11 +44,17 @@ struct pte {
     struct semaphore *pte_mutex; /* Mutual exclusion for this page */
     int num_users;               /* How many users are reading from this page? */
     int dirty;                   /* Is this page safe to write to */
+    
+    /* permissions */
+    permissions_t permissions;
 };
 
 /* create and destroy a pte */
 struct pte *pte_init();
 void pte_destroy(struct pte *entry); 
+
+/* Copy a pte entry */
+void pte_copy(struct pte *src, struct pte *dest);
 
 
 /* pagetable definition */

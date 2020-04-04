@@ -46,7 +46,9 @@ struct thread {
 	int t_exitflag;
 	int t_exitcode;
 	int t_adoptedflag;
-	/* This lock is critical for the interplay between sys__exit and sys_waitpid. */
+	int t_waitflag;		/* Flag is set if it should be reaped by another process */
+
+	/* This sem is critical for the interplay between sys__exit and sys_waitpid. */
 	struct semaphore *t_exitsem;
 
 	/* lab3 code - end */

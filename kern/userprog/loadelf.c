@@ -17,6 +17,7 @@
 #include <thread.h>
 #include <curthread.h>
 #include <vnode.h>
+#include <permissions.h>
 
 /*
  * Load a segment at virtual address VADDR. The segment in memory
@@ -188,9 +189,7 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 	struct addrspace *as = curthread->t_vmspace;
 	as->as_heap->vbase = (as->as_data->vbase + (as->as_data->npages)*PAGE_SIZE); /* Heap starts after data segment */
 	as->as_heap->npages = 0;
-	as->as_heap->exec_new = 0;	/* Heap is not for executing */
-	as->as_heap->write_new = 1; /* Can read */
-	as->as_heap->read_new = 1;	/* Can write */
+	as->as_heap->permissions = set_permissions(1, 1, 0); /* RW_ */
 
 	/* This does all the page allocations at once! This will have to change when we load on demand... */
 	result = as_prepare_load(curthread->t_vmspace);

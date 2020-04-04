@@ -16,6 +16,7 @@
 #include <machine/spl.h>
 #include <pagetable.h>
 #include <bitmap.h>
+#include <permissions.h>
 
 
 /* current active address space id */
@@ -24,11 +25,18 @@ static asid_t curaddrspace;
 /* flag to indicate whether or not to check we should be checking for specific asids */
 static int curaddrspace_flag = 0;
 
-/* debug flag that lets us enable tlb tags */
-static int DEBUG_ASID_ENABLE = 0;
+/* bitmap for maintaining ASIDs */
+static struct bitmap *as_bitmap;
 
 /* synchronization primitive for the asid bitmap */
 static struct semaphore *as_bitmap_mutex = NULL;
+
+
+
+/* debug flag that enables tlb tags */
+static int DEBUG_ASID_ENABLE = 0;
+
+
 
 /* 
  * Create the addrspace ASID bitmap 
@@ -89,27 +97,52 @@ as_create(void)
 		return NULL;
 	}
 
+	as->as_stack = (struct as_region *)kmalloc(sizeof(struct as_region));
+	if(as->as_stack == NULL) {
+		kfree(as->as_heap);
+		kfree(as->as_data);
+		kfree(as->as_code);
+		pt_destroy(as->as_pagetable);
+		kfree(as);
+		return NULL;
+	}
+
 	/* Attempt to get an available asid. If possible. */
-	P(as_bitmap_mutex);
-	err = bitmap_alloc(as_bitmap, &index);
-	if(err){
+	if(DEBUG_ASID_ENABLE) {
+		P(as_bitmap_mutex);
+		err = bitmap_alloc(as_bitmap, &index);
+		if(err){
+			as->as_asid = NUM_ASID; /* Set to invalid asid just in case */
+			as->as_asid_set = 0;	
+		}
+		else {
+			as->as_asid = index;
+			as->as_asid_set = 1;
+		}
+		V(as_bitmap_mutex);
+	}
+	else {
 		as->as_asid = NUM_ASID; /* Set to invalid asid just in case */
 		as->as_asid_set = 0;	
 	}
-	else {
-		as->as_asid = index;
-		as->as_asid_set = 1;
-	}
-	V(as_bitmap_mutex);
+
 
 	/* Initialize everything */
 	as->as_code->vbase = 0;
 	as->as_code->npages = 0;
+	as->as_code->permissions = set_permissions(0, 0, 0);
+
 	as->as_data->vbase = 0;
 	as->as_data->npages = 0;
+	as->as_data->permissions = set_permissions(0, 0, 0);
+
 	as->as_heap->vbase = 0;
 	as->as_heap->npages = 0;
-	as->as_stackpbase = 0;
+	as->as_heap->permissions = set_permissions(0, 0, 0);
+
+	as->as_stack->vbase = 0;
+	as->as_stack->npages = 0;
+	as->as_stack->permissions = set_permissions(0, 0, 0);
 
 	return as;
 }
@@ -125,16 +158,19 @@ as_destroy(struct addrspace *as)
 	assert(as != NULL);
 
 	/* Give up the addrspace id */
-	P(as_bitmap_mutex);
-	if(as->as_asid_set) {
-		bitmap_unmark(as_bitmap, as->as_asid);
+	if(DEBUG_ASID_ENABLE) {
+		P(as_bitmap_mutex);
+		if(as->as_asid_set) {
+			bitmap_unmark(as_bitmap, as->as_asid);
+		}
+		V(as_bitmap_mutex);
 	}
-	V(as_bitmap_mutex);
 
 	/* Destroy the regions, pagetable, and as */
 	kfree(as->as_code);
 	kfree(as->as_data);
 	kfree(as->as_heap);
+	kfree(as->as_stack);
 	pt_destroy(as->as_pagetable);
 	kfree(as);
 }
@@ -161,10 +197,19 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	/* Copy over virtual address fields */
 	new->as_code->vbase = old->as_code->vbase;
 	new->as_code->npages = old->as_code->npages;
+	new->as_code->permissions = old->as_code->permissions;
+
 	new->as_data->vbase = old->as_data->vbase;
 	new->as_data->npages = old->as_data->npages;
+	new->as_data->permissions = old->as_data->permissions;
+
 	new->as_heap->vbase = old->as_heap->vbase;
 	new->as_heap->npages = old->as_heap->npages;
+	new->as_heap->permissions = old->as_heap->permissions;
+
+	new->as_stack->vbase = old->as_stack->vbase;
+	new->as_stack->npages = old->as_stack->npages;
+	new->as_stack->permissions = old->as_stack->permissions;
 
 	/* 
 	 * Copy entries to the page table
@@ -258,7 +303,10 @@ as_prepare_load(struct addrspace *as)
 		if(entry->ppageaddr == 0) {
 			return ENOMEM;	/* Don't destroy addrspace because curthread->t_vmspace is destroyed in thread_exit */
 		}
+		/* Update permissions */
+		entry->permissions = set_permissions(1, 0, 1); /* R_X */
 	}
+
 	/* Data segment */
 	for(i=0; i<as->as_data->npages; i++) {
 		entry = pte_init();
@@ -269,33 +317,9 @@ as_prepare_load(struct addrspace *as)
 		if(entry->ppageaddr == 0) {
 			return ENOMEM;
 		}
+		/* Update permissions */
+		entry->permissions = set_permissions(1, 1, 0); /* RW_ */
 	}
-	/* Heap and stack have 0 pages at first, so we don't need to allocate anything for them */
-
-	/* Set permissions for the regions */
-	as->as_code->exec_old = as->as_code->exec_new;
-	as->as_code->write_old = as->as_code->write_new;
-	as->as_code->read_old = as->as_code->read_new;
-
-	as->as_code->exec_new = 1;
-	as->as_code->write_new = 1;
-	as->as_code->read_new = 1;
-
-	as->as_data->exec_old = as->as_data->exec_new;
-	as->as_data->write_old = as->as_data->write_new;
-	as->as_data->read_old = as->as_data->read_new;
-
-	as->as_data->exec_new = 1;
-	as->as_data->write_new = 1;
-	as->as_data->read_new = 1;	
-
-	as->as_heap->exec_old = as->as_heap->exec_new;
-	as->as_heap->write_old = as->as_heap->write_new;
-	as->as_heap->read_old = as->as_heap->read_new;
-
-	as->as_heap->exec_new = 1;
-	as->as_heap->write_new = 1;
-	as->as_heap->read_new = 1;
 
 	return 0;
 }
@@ -322,7 +346,10 @@ as_activate(struct addrspace *as)
 	/* This area is critical as we are handling tlb as well as writing to curaddrspace globals */
 	spl = splhigh();
 
-	if(DEBUG_ASID_ENABLE) {
+	if(!DEBUG_ASID_ENABLE) {
+		TLB_Flush();
+	}
+	else {
 		/* Handle all 4 cases, curaddrspace_flag lets us know if the previous addrspace had an ID or not */
 		if(curaddrspace_flag){
 			if(as->as_asid_set) {
@@ -361,9 +388,6 @@ as_activate(struct addrspace *as)
 			}
 		}
 	}
-	else {
-		TLB_Flush();
-	}
 
 	splx(spl);
 }
@@ -383,7 +407,6 @@ int
 as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 		 int readable, int writeable, int executable)
 {
-	/* Dumbvm inspired first part */
 	size_t npages; 
 
 	/* Align the region. First, the base... */
@@ -395,21 +418,17 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 
 	npages = sz / PAGE_SIZE;
 
-	if(as->as_code == 0){
+	if(as->as_code->vbase == 0){
 		as->as_code->vbase = vaddr;
 		as->as_code->npages = npages;
-		as->as_code->exec_new = executable;
-		as->as_code->write_new = writeable;
-		as->as_code->read_new = readable;
+		as->as_code->permissions = set_permissions(readable, writeable, executable);
 		return 0;		
 	}
 
-	if(as->as_data == 0){
+	if(as->as_data->vbase == 0){
 		as->as_data->vbase = vaddr;
 		as->as_data->npages = npages;
-		as->as_data->exec_new = executable;
-		as->as_data->write_new = writeable;
-		as->as_data->read_new = readable;
+		as->as_code->permissions = set_permissions(readable, writeable, executable);
 		return 0;		
 	}
 
@@ -420,27 +439,18 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 int
 as_complete_load(struct addrspace *as)
 {
-	/* Reset all permissions back to their OG values as before load */
-	as->as_code->exec_new = as->as_code->exec_old;
-	as->as_code->write_new = as->as_code->write_old;
-	as->as_code->read_new = as->as_code->read_old;
-
-	as->as_data->exec_new = as->as_data->exec_old;
-	as->as_data->write_new = as->as_data->write_old;
-	as->as_data->read_new = as->as_data->read_old;
-
-	as->as_heap->exec_new = as->as_heap->exec_old;
-	as->as_heap->write_new = as->as_heap->write_old;
-	as->as_heap->read_new = as->as_heap->read_old;
-
+	(void) as;
 	return 0;
 }
+
 
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
 	/* Initial user-level stack pointer */
-	as->as_stackpbase = USERTOP;
+	as->as_stack->vbase = USERTOP;
+	as->as_stack->npages = 0;
+	as->as_stack->permissions = set_permissions(1, 1, 0); /* RW_ */
 	*stackptr = USERSTACK;
 	
 	return 0;

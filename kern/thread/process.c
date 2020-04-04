@@ -115,6 +115,7 @@ int proc_init(struct thread *child_thread) {
 	child_thread->t_exitflag = 0; 
     child_thread->t_adoptedflag = 0;
 	child_thread->t_exitcode = -25;
+    child_thread->t_waitflag = 0;
 
     /* Create locking device for wait_pid */
     child_thread->t_exitsem = sem_create("sem for exit...", 0);
@@ -205,6 +206,7 @@ void proc_stat() {
  */
 int proc_fork(struct trapframe *tf, pid_t *ret_val) 
 {
+    int spl;
     int err = 0;
 
     /* Create trap frame for the child and thread object */
@@ -228,13 +230,18 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
     }
 
     /* create a fork, child thread is set up to start from md_forkentry */
+    spl = splhigh();
+
     struct thread *child_thread;
     err = thread_fork("dont care", (void *)child_tf, (unsigned long)child_addrspace, md_forkentry, &child_thread);
     if(err) {
         as_destroy(child_addrspace);
         kfree(child_tf);
         return err;
-    }
+    }  
+    child_thread->t_waitflag = 1;
+    
+    splx(spl);
 
     /* return */
     *ret_val = child_thread->t_pid;

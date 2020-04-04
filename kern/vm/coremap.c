@@ -20,8 +20,8 @@ static int first_avail_ppage = 0;
 /* one after the last available page */
 static int last_avail_ppage = 0;
 
-/* flag to indicate whether or not to use mutex */
-static int use_mutex = 0; 
+/* flag to indicate whether or not to use mutex, for debugging */
+static int DEBUG_USE_MUTEX = 0; 
 /* 
  * Currently mutex doesn't work, but I want to eventually use a synchronization primitive rather than interrupts... 
  * Using the semaphore causes a hang in booting... not sure where the deadlock is coming from
@@ -105,7 +105,7 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
     int spl;
     
     /* get access to coremap using semapore or just disable interrupts */
-    if(!use_mutex) 
+    if(!DEBUG_USE_MUTEX) 
         spl = splhigh();
     else {
         P(coremap_mutex);
@@ -156,7 +156,7 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
             }
         }
 
-        if(!use_mutex) 
+        if(!DEBUG_USE_MUTEX) 
             splx(spl);
         else {
             V(coremap_mutex);
@@ -164,7 +164,7 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
         return (start_page*PAGE_SIZE);
     }
 
-    if(!use_mutex) 
+    if(!DEBUG_USE_MUTEX) 
         splx(spl);
     else {
         V(coremap_mutex);
@@ -184,7 +184,7 @@ void free_ppages(paddr_t paddr)
     int spl;
 
     /* get access to coremap using semapore or just disable interrupts */
-    if(!use_mutex) 
+    if(!DEBUG_USE_MUTEX) 
         spl = splhigh();
     else {
         P(coremap_mutex);
@@ -209,7 +209,7 @@ void free_ppages(paddr_t paddr)
         coremap[i].num_pages_allocated = 0;
     }
     
-    if(!use_mutex) 
+    if(!DEBUG_USE_MUTEX) 
         splx(spl);
     else {
         V(coremap_mutex);

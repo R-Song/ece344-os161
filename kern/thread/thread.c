@@ -123,11 +123,9 @@ exorcise(void)
 		struct thread *z = array_getguy(zombies, i);
 		assert(z!=curthread);
 		/* 
-		 * Exorcise is called by init(pid1), we only want to reap our own children, not others! 
-		 * We should also refrain from destroying threads in interrupt handler. Exorcise can wait until
-		 * we are out of interrupts!
+		 * Only reap adopted threads. Our own threads have to be reaped seperately.
 		 */
-		if(z->t_ppid == 1 && z->t_adoptedflag == 0 && in_interrupt==0) {
+		if(z->t_ppid == 1 && (z->t_adoptedflag == 1 || (z->t_waitflag == 0) ) && in_interrupt==0) {
 			proc_destroy(z);
 			thread_destroy(z);
 			array_remove(zombies, i);
@@ -362,13 +360,14 @@ thread_fork(const char *name,
  * Return zero on success, EDEADLK if deadlock would occur.
  */
 int thread_join(struct thread * thread)
-{
+{	
     /* Call waitpid */
 	int err, exitcode;
     err = proc_waitpid(thread->t_pid, &exitcode);
 	if(err) {
 		return err;
 	}
+
     return 0;
 }
 
@@ -662,12 +661,6 @@ mi_threadstart(void *data1, unsigned long data2,
 
 struct addrspace *
 thread_getas(void){
-	struct addrspace *as;
-	struct thread *cur_thread = curthread;
-	if(cur_thread == NULL){
-		return NULL;
-	}
-
-	as = cur_thread->t_vmspace;
-	return as;
+	assert(curthread != NULL);
+	return curthread->t_vmspace;
 }

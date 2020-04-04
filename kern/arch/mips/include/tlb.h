@@ -48,6 +48,10 @@ void TLB_WriteDirty(u_int32_t index, int value);
 /* Complete TLB flush */
 void TLB_Flush();
 
+/* TLB Replace. Implements our own replacement policy. Returns the index that we wrote to */
+int TLB_Replace(u_int32_t entryhi, u_int32_t entrylo);
+
+
 /*
  * TLB entry fields.
  *

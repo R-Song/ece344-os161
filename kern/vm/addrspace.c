@@ -24,6 +24,9 @@ static asid_t curaddrspace;
 /* flag to indicate whether or not to check we should be checking for specific asids */
 static int curaddrspace_flag = 0;
 
+/* debug flag that lets us enable tlb tags */
+static int DEBUG_ASID_ENABLE = 0;
+
 /* synchronization primitive for the asid bitmap */
 static struct semaphore *as_bitmap_mutex = NULL;
 
@@ -319,42 +322,47 @@ as_activate(struct addrspace *as)
 	/* This area is critical as we are handling tlb as well as writing to curaddrspace globals */
 	spl = splhigh();
 
-	/* Handle all 4 cases, curaddrspace_flag lets us know if the previous addrspace had an ID or not */
-	if(curaddrspace_flag){
-		if(as->as_asid_set) {
-			curaddrspace = as->as_asid;
-			curaddrspace_flag = 1;
-			/* Invalidate all TLB entries by setting their valid bits to 0 */
-			for(i=0; i<NUM_TLB; i++) {
-				u_int32_t asid = TLB_ReadAsid(i);
-				if(asid != curaddrspace) {
-					TLB_WriteValid(i, 0); /* Set valid bit to 0 */
-				}
-				else {
-					TLB_WriteValid(i, 1); /* Entry belongs to us, set valid bit to 1 */
+	if(DEBUG_ASID_ENABLE) {
+		/* Handle all 4 cases, curaddrspace_flag lets us know if the previous addrspace had an ID or not */
+		if(curaddrspace_flag){
+			if(as->as_asid_set) {
+				curaddrspace = as->as_asid;
+				curaddrspace_flag = 1;
+				/* Invalidate all TLB entries by setting their valid bits to 0 */
+				for(i=0; i<NUM_TLB; i++) {
+					u_int32_t asid = TLB_ReadAsid(i);
+					if(asid != curaddrspace) {
+						TLB_WriteValid(i, 0); /* Set valid bit to 0 */
+					}
+					else {
+						TLB_WriteValid(i, 1); /* Entry belongs to us, set valid bit to 1 */
+					}
 				}
 			}
+			else {
+				curaddrspace = NUM_ASID; /* Set to invalid id just in case */
+				curaddrspace_flag = 0;	 /* Current address space doesn't have an ID */
+				/* Flush the TLB, can't risk duplicate entries in the TLB */
+				TLB_Flush();
+			}
 		}
-		else {
-			curaddrspace = NUM_ASID; /* Set to invalid id just in case */
-			curaddrspace_flag = 0;	 /* Current address space doesn't have an ID */
-			/* Flush the TLB, can't risk duplicate entries in the TLB */
-			TLB_Flush();
+		else{
+			if(as->as_asid_set) {
+				curaddrspace = as->as_asid;
+				curaddrspace_flag = 1;
+				/* Even tho this addrspace has an ID, we can't risk duplicate entries from before, so flush */
+				TLB_Flush();
+			}
+			else {
+				curaddrspace = NUM_ASID; /* Set to invalid id just in case */
+				curaddrspace_flag = 0;	 /* Current address space doesn't have an ID */
+				/* Flush the TLB, can't risk duplicate entries in the TLB */
+				TLB_Flush();
+			}
 		}
 	}
-	else{
-		if(as->as_asid_set) {
-			curaddrspace = as->as_asid;
-			curaddrspace_flag = 1;
-			/* Even tho this addrspace has an ID, we can't risk duplicate entries from before, so flush */
-			TLB_Flush();
-		}
-		else {
-			curaddrspace = NUM_ASID; /* Set to invalid id just in case */
-			curaddrspace_flag = 0;	 /* Current address space doesn't have an ID */
-			/* Flush the TLB, can't risk duplicate entries in the TLB */
-			TLB_Flush();
-		}
+	else {
+		TLB_Flush();
 	}
 
 	splx(spl);
@@ -431,22 +439,10 @@ as_complete_load(struct addrspace *as)
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
-	(void)as;
-
 	/* Initial user-level stack pointer */
+	as->as_stackpbase = USERTOP;
 	*stackptr = USERSTACK;
 	
 	return 0;
 }
-
-// look up page table 
-// int
-// as_fault()
-
-//struct addrspace *
-//as_get_by_asid(asid_t curr_asid){
-//
-//}
-
-
 

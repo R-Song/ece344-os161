@@ -441,15 +441,38 @@ execv_failed:
  *  EINVAL	The request would move the "break" below its initial value.
  * 
  * Strategy for implementation:
- * 	malloc calls sbrk, therefore should the system call CALL malloc?
+ * 	Round to the nearest page, then allocate space on the heap accordingly.
  */
 int sys_sbrk(intptr_t amount, pid_t *retval){
+	/* Retrieve current address space */
 	struct addrspace *cur_as = thread_getas();
 	vaddr_t old_heap_end;
 	old_heap_end = cur_as->as_heap->vbase + ((cur_as->as_heap->npages) * PAGE_SIZE); 
 
+	/*
+	 * A few things: 
+	 * amount wont get rounded with that method...
+	 * Shifting is the same as dividing. I just like shifting because it makes it clear to the compiler to do the computationally efficient method
+	 * Documentation says that amount will always be page aligned. So rounding isnt neccessary. You can probably just return EINVAL for non aligned amounts
+	 * heap_size + amount can in fact be equal to 0. Ex. calling sbrk(0) when ur heap is empty (0) is perfectly legal. It should just be < not <=
+	 * Dont worry about the type of retval
+	 * If there isnt enought memory, u shouldn't just return. What you should really do is delete the pages that were already allocated, otherwise no one
+	 * is ever going to free them. 
+	 * 
+	 * ex. User asks for 5 more pages. But after allocating 3 you run out of memory. Right now you just return. But those 3 pages are already allocated.
+	 * Not only that but the address space doesn't even have them registered in the heap size. This could cause all sorts of errors.
+	 * So the these 3 pages should be removed from the coremap via the free_ppages function. 
+	 * 
+	 * If you're wondering why I didn't do this process in as_prepareload or as_copy, it's because thread_exit destroys the address space, which
+	 * also deallocates all physical pages in the process. Not only that, but if as_copy or as_prepareload fail, the entire thread is dropped. This 
+	 * is not the case for user processes. We don't destroy the addressspace, we simply tell the user we dont have memory. As a result, we don't want
+	 * to leak pages. 
+	 * 
+	 */
+
+
 	/* round up amount by 4, to lower the chance of unaligned pointers */
-	amount = amount/PAGE_SIZE + PAGE_SIZE;   // / or >> ??
+	amount = amount/PAGE_SIZE + PAGE_SIZE; 
 	intptr_t heap_size = (intptr_t)(cur_as->as_heap->npages * PAGE_SIZE);
 	/* if amount is negative, ensure heap_end does not go past heap_start */
 	if( (heap_size + amount) <= 0 ){

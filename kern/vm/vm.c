@@ -64,10 +64,19 @@ free_kpages(vaddr_t addr)
 
 
 /*
- * Handles TLB faults
+ * vm_fault()
+ * Handles TLB faults. A TLB faults occur when hardware does not know how to translate
+ * a virtual add since the translation is not present in any TLB entry. A load or store
+ * cannot be completed if there isn't a TLB entry. As a result, we need to examine the fault
+ * and determine whether to allocate a page to resolve the fault, or to kill the program.
  * 
- * TLB faults occur when hardware does not know how to translate
- * a virtual add since the translation is not present in any TLB entry
+ * Page faults imply TLB faults but not the other way around. Without load on demand or
+ * swapping, there should never be any page faults... for now.
+ * 
+ * 1. Fault on Read, Page Fault: 		This is a SEG fault. Kill the program
+ * 2. Fault on Read, No Page Fault: 	Add it to the TLB
+ * 3. Fault on Write, Page Fault: 		If they are writing to the correct stackptr, then allocate a new page. Otherwise kill the program
+ * 4. Fault on Write, No Page Fault: 	Add it into the TLB. Check if the page in question is writable though
  * 
  */ 
 

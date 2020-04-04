@@ -12,7 +12,6 @@
  * Also when destroying a page table, we need to know which pages to deallocated!!!! something I missed entirely...
  */
 
-
 /* Machine dependant stuff */
 int pt_vaddr_to_first_index(vaddr_t addr) {
     int idx = ((addr >> PAGE_OFFSET) >> PT_SECOND_LAYER_OFFSET);

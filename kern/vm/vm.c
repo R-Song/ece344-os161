@@ -100,8 +100,9 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	 * For now, if the entry exists in page table, it means it also exists in the coremap meaning no page fault
 	 */
 	int is_pagefault = 0;
+	vaddr_t faultpage = (faultaddress & PAGE_FRAME);
 
-	struct pte *entry = pt_get(as->as_pagetable, (faultaddress & PAGE_FRAME) );
+	struct pte *entry = pt_get(as->as_pagetable, faultpage );
 	if(entry == NULL) {
 		is_pagefault = 1;
 	}
@@ -120,7 +121,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 				if( is_readable(entry->permissions) ) {
 					/* No page fault and has read permission. Add to TLB */
 					int idx;
-					u_int32_t entryhi = (faultaddress & PAGE_FRAME);
+					u_int32_t entryhi = faultpage;
 					u_int32_t entrylo = entry->ppageaddr;
 					idx = TLB_Replace(entryhi, entrylo);
 					TLB_WriteDirty(idx, 0);

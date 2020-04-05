@@ -281,6 +281,10 @@ as_copy(struct addrspace *old, struct addrspace **ret)
  * This is called in load_elf()
  * 
  * This function will most likely be deprecated when we start doing load on demand
+ * 
+ * Note: Permissions are set to _W_. In complete load we set them to what they should be.
+ * This is because we need to actually load the code and data segments into memory first,
+ * which requires _W_ priviledges.
  */ 
 int
 as_prepare_load(struct addrspace *as)
@@ -304,7 +308,7 @@ as_prepare_load(struct addrspace *as)
 			return ENOMEM;	/* Don't destroy addrspace because curthread->t_vmspace is destroyed in thread_exit */
 		}
 		/* Update permissions */
-		entry->permissions = set_permissions(1, 0, 1); /* R_X */
+		entry->permissions = set_permissions(0, 1, 0); /* _W_ */
 	}
 
 	/* Data segment */
@@ -318,7 +322,7 @@ as_prepare_load(struct addrspace *as)
 			return ENOMEM;
 		}
 		/* Update permissions */
-		entry->permissions = set_permissions(1, 1, 0); /* RW_ */
+		entry->permissions = set_permissions(0, 1, 0); /* _W_ */
 	}
 
 	return 0;
@@ -428,7 +432,7 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 	if(as->as_data->vbase == 0){
 		as->as_data->vbase = vaddr;
 		as->as_data->npages = npages;
-		as->as_code->permissions = set_permissions(readable, writeable, executable);
+		as->as_data->permissions = set_permissions(readable, writeable, executable);
 		return 0;		
 	}
 
@@ -436,10 +440,29 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 }
 
 
+/*
+ * Set the permissions to the proper values.
+ */
 int
 as_complete_load(struct addrspace *as)
 {
-	(void) as;
+	unsigned i;
+	struct pte *entry;
+	vaddr_t addr;
+
+	/* Code segment */
+	for(i=0; i<as->as_code->npages; i++) {
+		addr = (as->as_code->vbase + (i*PAGE_SIZE)); 
+		entry = pt_get(as->as_pagetable, addr);
+		entry->permissions = as->as_code->permissions;
+	}
+
+	/* Data segment */
+	for(i=0; i<as->as_data->npages; i++) {
+		addr = (as->as_data->vbase + (i*PAGE_SIZE)); 
+		entry = pt_get(as->as_pagetable, addr);
+		entry->permissions = as->as_data->permissions; /* _W_ */
+	}
 	return 0;
 }
 

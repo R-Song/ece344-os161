@@ -20,6 +20,8 @@
 #include <vm.h>
 #include <coremap.h>
 #include <syscall.h>
+#include <pagetable.h>
+#include <permissions.h>
 
 
 /*
@@ -90,6 +92,8 @@ free_kpages(vaddr_t addr)
 int
 vm_fault(int faulttype, vaddr_t faultaddress)
 {	
+	int spl = splhigh();
+
 	/* Get current addrspace */
 	struct addrspace *as = curthread->t_vmspace;
 	assert(as != NULL);
@@ -106,7 +110,17 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	if(entry == NULL) {
 		is_pagefault = 1;
 	}
-	
+
+
+	/*
+	 * Check to see if this is fault to the stack. If so we can should allocate a page
+	 */
+	int is_stack = 0;
+	if( faultpage == (as->as_stackptr - PAGE_SIZE) ) {
+		is_stack = 1;
+	}
+
+
 	/*
 	 * Handle the faults
 	 */
@@ -115,7 +129,10 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		case VM_FAULT_READ:
 			if(is_pagefault) {
 				/* Read fault with page fault. We should kill the program */
-				sys__exit(-1);
+				kprintf("Fatal read fault at 0x%x\n", faultpage);
+				//TLB_Stat();
+				splx(spl);
+				return EFAULT;
 			}
 			else {
 				if( is_readable(entry->permissions) ) {
@@ -124,18 +141,56 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 					u_int32_t entryhi = faultpage;
 					u_int32_t entrylo = entry->ppageaddr;
 					idx = TLB_Replace(entryhi, entrylo);
-					TLB_WriteDirty(idx, 0);
+					TLB_WriteDirty(idx, 1);
 					TLB_WriteValid(idx, 1);
+					//TLB_Stat();
 				}
 				else {
-					sys__exit(-1);
+					splx(spl);
+					return EFAULT;
 				}
 			}
 			break;
 
 		case VM_FAULT_WRITE:
 			if(is_pagefault) {
-				sys__exit(-1);
+				if(is_stack) {
+					/* Allocate a page and push down the stack, that's how stacks works */
+					as->as_stackptr -= PAGE_SIZE;
+					
+					struct pte *entry = pte_init();
+					if(entry == NULL) {
+						kprintf("Out of kernel memory!!!\n");
+						TLB_Stat();
+						break;
+					}
+
+					entry->ppageaddr = get_ppages(1, 0, 0);
+					entry->permissions = set_permissions(1, 1, 0); /* RW_ */
+					if(entry->ppageaddr == 0 ) {
+						pte_destroy(entry);
+						kprintf("Out of memory :((\n");
+						TLB_Stat();
+						break;
+					}
+					
+					pt_add(as->as_pagetable, as->as_stackptr, entry);
+
+					/* Put address into the TLB */
+					int idx;
+					u_int32_t entryhi = as->as_stackptr;
+					u_int32_t entrylo = entry->ppageaddr;
+					idx = TLB_Replace(entryhi, entrylo);
+					TLB_WriteDirty(idx, 1);
+					TLB_WriteValid(idx, 1);
+					TLB_Stat();
+					break;
+				}
+
+				kprintf("Fatal write fault at 0x%x\n", faultpage);
+				TLB_Stat();
+				splx(spl);
+				return EFAULT;
 			}
 			else {
 				if( is_writeable(entry->permissions) ) {
@@ -146,22 +201,28 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 					idx = TLB_Replace(entryhi, entrylo);
 					TLB_WriteDirty(idx, 1);
 					TLB_WriteValid(idx, 1);
+					//TLB_Stat();
 				}
 				else {
-					sys__exit(-1);
+					//TLB_Stat();
+					splx(spl);
+					return EFAULT;
 				}
 			}
 			break;
 
 		case VM_FAULT_READONLY:
 			/* This fault isn't useful right now. We will need it later tho when we do swapping */
-			sys__exit(-1);
+			splx(spl);
+			return EFAULT;
 			break;
 
 		default:
-			panic("Unknown TLB fault!!!");
+			splx(spl);
+			return EINVAL;
 	}
 
+	splx(spl);
 	return 0;
 }
 

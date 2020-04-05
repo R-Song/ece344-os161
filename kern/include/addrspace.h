@@ -65,7 +65,7 @@ struct addrspace {
 	struct as_region *as_code;	/* data segments */
 	struct as_region *as_data;
 	struct as_region *as_heap;
-	struct as_region *as_stack;
+	vaddr_t as_stackptr;
 	asid_t as_asid;				/* addrspace tags for the TLB */
 	int as_asid_set;
 #endif

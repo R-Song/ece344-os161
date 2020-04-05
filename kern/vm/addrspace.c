@@ -97,16 +97,6 @@ as_create(void)
 		return NULL;
 	}
 
-	as->as_stack = (struct as_region *)kmalloc(sizeof(struct as_region));
-	if(as->as_stack == NULL) {
-		kfree(as->as_heap);
-		kfree(as->as_data);
-		kfree(as->as_code);
-		pt_destroy(as->as_pagetable);
-		kfree(as);
-		return NULL;
-	}
-
 	/* Attempt to get an available asid. If possible. */
 	if(DEBUG_ASID_ENABLE) {
 		P(as_bitmap_mutex);
@@ -140,9 +130,7 @@ as_create(void)
 	as->as_heap->npages = 0;
 	as->as_heap->permissions = set_permissions(0, 0, 0);
 
-	as->as_stack->vbase = 0;
-	as->as_stack->npages = 0;
-	as->as_stack->permissions = set_permissions(0, 0, 0);
+	as->as_stackptr = 0;
 
 	return as;
 }
@@ -170,7 +158,6 @@ as_destroy(struct addrspace *as)
 	kfree(as->as_code);
 	kfree(as->as_data);
 	kfree(as->as_heap);
-	kfree(as->as_stack);
 	pt_destroy(as->as_pagetable);
 	kfree(as);
 }
@@ -207,9 +194,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	new->as_heap->npages = old->as_heap->npages;
 	new->as_heap->permissions = old->as_heap->permissions;
 
-	new->as_stack->vbase = old->as_stack->vbase;
-	new->as_stack->npages = old->as_stack->npages;
-	new->as_stack->permissions = old->as_stack->permissions;
+	new->as_stackptr = old->as_stackptr;
 
 	/* 
 	 * Copy entries to the page table
@@ -463,6 +448,7 @@ as_complete_load(struct addrspace *as)
 		entry = pt_get(as->as_pagetable, addr);
 		entry->permissions = as->as_data->permissions; /* _W_ */
 	}
+
 	return 0;
 }
 
@@ -471,9 +457,7 @@ int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
 	/* Initial user-level stack pointer */
-	as->as_stack->vbase = USERTOP;
-	as->as_stack->npages = 0;
-	as->as_stack->permissions = set_permissions(1, 1, 0); /* RW_ */
+	as->as_stackptr = USERTOP;
 	*stackptr = USERSTACK;
 	
 	return 0;

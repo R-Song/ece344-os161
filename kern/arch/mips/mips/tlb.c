@@ -119,9 +119,22 @@ void TLB_Flush()
 int TLB_Replace(u_int32_t entryhi, u_int32_t entrylo)
 {
     int spl, idx;
+    //u_int32_t ehi, elo;
 
     spl = splhigh();
 
+    // /* Replace invalid entries first */
+    // for(idx=0; idx<NUM_TLB; idx++) {
+    //     TLB_Read(&ehi, &elo, idx);
+	// 	if (elo & TLBLO_VALID) {
+	// 		continue;
+	// 	}
+    //     TLB_Write(entryhi, entrylo, idx);
+    //     splx(spl);
+    //     return idx;
+    // }
+
+    /* Evict randomly... */
     TLB_Random(entryhi, entrylo);
     idx = TLB_Probe(entryhi, entrylo);
     assert(idx >= 0);
@@ -129,5 +142,29 @@ int TLB_Replace(u_int32_t entryhi, u_int32_t entrylo)
     splx(spl);
     return idx;
 }
+
+
+/*
+ * TLB_Stat()
+ * Print debugging information for TLB
+ */
+void TLB_Stat()
+{
+    int spl = splhigh();
+
+    int i;
+    u_int32_t ehi, elo;
+    for(i=0; i<NUM_TLB; i++) {
+        TLB_Read(&ehi, &elo, i);
+
+        int valid = TLB_ReadValid(i);
+        int dirty = TLB_ReadDirty(i);
+
+        kprintf("ENTRYNO: %02d  -----  EHI: 0x%08x  |  ELO: 0x%08x  |  VALID: %d  |  DIRTY: %d\n", i, ehi, elo, valid, dirty);
+    }
+    splx(spl);
+}
+
+
 
 

@@ -146,7 +146,6 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	int is_pagefault;
 	int is_stack;
-	int is_loading;
 
 	vaddr_t faultpage;
 	int retval;
@@ -169,12 +168,15 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		is_stack = 1;
 	}
 
-	/* Check to see if we are still loading ELF */
-	is_loading = 0;
-	if( as->as_stackptr == 0){
-		is_loading = 1;
-	}
-
+	/* Check to see if address is valid */
+	if( !is_vaddrcode(as, faultpage) && 
+		!is_vaddrdata(as, faultpage) && 
+		!is_vaddrheap(as, faultpage) && 
+		!is_vaddrstack(as, faultpage) && 
+		!is_stack ) {
+			kprintf("Page 0x%x is not in a valid region\n", faultpage);
+			return ENOMEM;
+		}
 
 	/*
 	 * Handle the faults
@@ -182,11 +184,11 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	switch(faulttype)
 	{
 		case VM_FAULT_READ:
-			retval = vm_readfault(as, faultentry, faultpage, is_pagefault, is_stack, is_loading);
+			retval = vm_readfault(as, faultentry, faultpage, is_pagefault, is_stack);
 			break;
 
 		case VM_FAULT_WRITE:
-			retval = vm_writefault(as, faultentry, faultpage, is_pagefault, is_stack, is_loading);
+			retval = vm_writefault(as, faultentry, faultpage, is_pagefault, is_stack);
 			break;
 
 		case VM_FAULT_READONLY:
@@ -202,11 +204,10 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 
 /* Handles faults on reads */
-int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage, int is_pagefault, int is_stack, int is_loading)
+int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage, int is_pagefault, int is_stack)
 {
 	assert(curspl>0);
 	(void) is_stack;
-	(void) is_loading;
 	(void) as;
 	int idx;
 
@@ -222,6 +223,7 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage
 			if(is_writeable(faultentry->permissions)) {
 				TLB_WriteDirty(idx, 1);
 			}
+			TLB_WriteDirty(idx, 1);
 			TLB_WriteValid(idx, 1);
 			return 0;
 		}
@@ -236,11 +238,10 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage
 
 
 /* Handles faults on writes */
-int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage, int is_pagefault, int is_stack, int is_loading)
+int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage, int is_pagefault, int is_stack)
 {
 	assert(curspl>0);
 	int idx;
-	(void) is_loading;
 
 	/* Check to see if page fault is to the stack. If so we should allocate a page for the stack. */
 	if(is_pagefault && is_stack) {

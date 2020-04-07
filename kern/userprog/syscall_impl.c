@@ -21,6 +21,8 @@
 #include <addrspace.h>
 #include <pagetable.h>
 #include <coremap.h>
+#include <vm.h>
+#include <machine/spl.h>
 
 /*
  * System call for write.
@@ -445,54 +447,54 @@ execv_failed:
  */
 int sys_sbrk(intptr_t amount, pid_t *retval)
 {
+	int spl = splhigh();
+
+	size_t i;
+	struct pte *new_entry;
+	vaddr_t vaddr;
+
 	/* Retrieve current address space */
-	struct addrspace *cur_as = thread_getas();
-	assert(cur_as != NULL);		/* This is a user process, it must have an addrspace */
+	struct addrspace *as = curthread->t_vmspace;
+	assert(as != NULL);								/* This is a user process, it must have an addrspace */
 
-	vaddr_t old_heap_end = cur_as->as_heap->vbase + ((cur_as->as_heap->npages) * PAGE_SIZE); 
-	intptr_t old_heap_size = (intptr_t)(cur_as->as_heap->npages * PAGE_SIZE);
-	int i, j, orig_pages, amount_pages;
-	struct pte *entry;
-	vaddr_t addr;
+	vaddr_t old_heapstart = as->as_heap->vbase;
+	vaddr_t old_heapend = as->as_heap->vbase + ((as->as_heap->npages) * PAGE_SIZE);
 
-	amount_pages = (int)(amount/PAGE_SIZE);		/* Number of pages requested by user */
-	orig_pages = (int)cur_as->as_heap->npages;	/* Number of pages in heap before the request */
+	size_t num_pages_requested = (amount*4)/PAGE_SIZE;
 
 	/* Ensure that amount is page aligned and will not decrement break point of heap below its start point */
-	if( (old_heap_size+amount < 0) || (amount%PAGE_SIZE != 0) ){
+	if( ( old_heapend + amount*4 < old_heapstart ) || ( (amount*4)%PAGE_SIZE != 0) ){
 		*retval = -1;
+		splx(spl);
 		return EINVAL;	
 	} 
 	
 	/* Allocate the pages requested by the user */
-	for(i=0; i<amount_pages; i++){
-		entry = pte_init();
-		if(entry == NULL) {
+	for(i=0; i<num_pages_requested; i++){
+		vaddr = old_heapend + i*PAGE_SIZE;
+		new_entry = alloc_upage(as, vaddr);
+		if(new_entry == NULL) {
 			goto sbrk_failed;
 		}
-
-		addr = (cur_as->as_heap->vbase + ((i+orig_pages)*PAGE_SIZE)); 
-		pt_add(cur_as->as_pagetable, addr, entry);
-		entry->ppageaddr = get_ppages(1, 0, 0);   /* Ask for one user non-fixed page */
-
-		if(entry->ppageaddr == 0) {
-			goto sbrk_failed;
-		}	
+		new_entry->permissions = set_permissions(1, 1, 0);
 	}
-	cur_as->as_heap->npages += (size_t)amount_pages;
-	*retval = old_heap_end;
+	/* Update heap breakpoint */
+	as->as_heap->npages += num_pages_requested;
+	*retval = old_heapend;
+	splx(spl);
 	return 0;
 
 sbrk_failed:
-	/* Allocate failed along the way. Restore to the previous state */
-	for(j=0; j <= i; j++){
-		addr = (cur_as->as_heap->vbase + ((j+orig_pages)*PAGE_SIZE));
-		entry = pt_get(cur_as->as_pagetable, addr);
-		if(entry->ppageaddr != 0) {
-			free_ppages(entry->ppageaddr);
-		} 
-		pt_remove(cur_as->as_pagetable, addr);
+	/* Allocate failed along the way. Free all allocated pages */
+	for(i=0; i < num_pages_requested; i++){
+		vaddr = old_heapend + i*PAGE_SIZE;
+		new_entry = pt_get(as->as_pagetable, vaddr);
+		if(new_entry == NULL) {
+			continue;
+		}
+		free_upage(as, vaddr);
 	}
 	*retval = -1;
+	splx(spl);
 	return ENOMEM;	
 }

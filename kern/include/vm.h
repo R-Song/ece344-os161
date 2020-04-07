@@ -23,8 +23,8 @@ void vm_bootstrap(void);
 
 /* Fault handling function called by trap code */
 int vm_fault(int faulttype, vaddr_t faultaddress);
-int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage, int is_pagefault, int is_stack, int is_loading);
-int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage, int is_pagefault, int is_stack, int is_loading);
+int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage, int is_pagefault, int is_stack);
+int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage, int is_pagefault, int is_stack);
 
 /* Allocate/free kernel heap pages (called by kmalloc/kfree) */
 vaddr_t alloc_kpages(int npages);

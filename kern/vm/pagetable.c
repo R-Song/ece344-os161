@@ -196,8 +196,7 @@ void pt_remove(pagetable_t pt, vaddr_t addr) {
     if(pt[first_layer_idx] == NULL || pt[first_layer_idx][second_layer_idx] == NULL) {
         return;
     }
-
-    pte_destroy(pt[first_layer_idx][second_layer_idx]);
+    
     pt[first_layer_idx][second_layer_idx] = NULL;
 }
 

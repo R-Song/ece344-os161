@@ -82,42 +82,41 @@ free_kpages(vaddr_t addr)
  * 4. Fault on Write, No Page Fault: 	Add it into the TLB. Check if the page in question is writable though
  * 
  */ 
-// Check if faultaddress is valid 
-// User code or data segment; user heap between heap_start and heap_end; user stack
-
-// For READ and WRITE
-// get the PTE of the faultaddress (walk current add space to that one ?) 
-// & check PTE_P ( to see if the page actually exists)
 
 int
 vm_fault(int faulttype, vaddr_t faultaddress)
 {	
 	int spl = splhigh();
 
+	int is_pagefault;
+	int is_stack;
+	int is_loading;
+
+	vaddr_t faultpage;
+	int retval;
+
 	/* Get current addrspace */
 	struct addrspace *as = curthread->t_vmspace;
 	assert(as != NULL);
 
-	/* 
-	 * Check whether faultaddress is a page fault or not 
-	 * This will be need to be changed later when we implement swapping. 
-	 * For now, if the entry exists in page table, it means it also exists in the coremap meaning no page fault
-	 */
-	int is_pagefault = 0;
-	vaddr_t faultpage = (faultaddress & PAGE_FRAME);
-
-	struct pte *entry = pt_get(as->as_pagetable, faultpage );
-	if(entry == NULL) {
+	/* Determine if fault address is a page fault or not */
+	is_pagefault = 0;
+	faultpage = (faultaddress & PAGE_FRAME);
+	struct pte *faultentry = pt_get(as->as_pagetable, faultpage);
+	if(faultentry == NULL) {
 		is_pagefault = 1;
 	}
 
-
-	/*
-	 * Check to see if this is fault to the stack. If so we can should allocate a page
-	 */
-	int is_stack = 0;
+	/* Check to see if faultpage is one below the current stackptr */
+	is_stack = 0;
 	if( faultpage == (as->as_stackptr - PAGE_SIZE) ) {
 		is_stack = 1;
+	}
+
+	/* Check to see if we are still loading ELF */
+	is_loading = 0;
+	if( as->as_stackptr == 0){
+		is_loading = 1;
 	}
 
 
@@ -127,102 +126,178 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	switch(faulttype)
 	{
 		case VM_FAULT_READ:
-			if(is_pagefault) {
-				/* Read fault with page fault. We should kill the program */
-				kprintf("Fatal read fault at 0x%x\n", faultpage);
-				//TLB_Stat();
-				splx(spl);
-				return EFAULT;
-			}
-			else {
-				if( is_readable(entry->permissions) ) {
-					/* No page fault and has read permission. Add to TLB */
-					int idx;
-					u_int32_t entryhi = faultpage;
-					u_int32_t entrylo = entry->ppageaddr;
-					idx = TLB_Replace(entryhi, entrylo);
-					TLB_WriteDirty(idx, 1);
-					TLB_WriteValid(idx, 1);
-					//TLB_Stat();
-				}
-				else {
-					splx(spl);
-					return EFAULT;
-				}
-			}
+			retval = vm_readfault(as, faultentry, faultpage, is_pagefault, is_stack, is_loading);
 			break;
 
 		case VM_FAULT_WRITE:
-			if(is_pagefault) {
-				if(is_stack) {
-					/* Allocate a page and push down the stack, that's how stacks works */
-					as->as_stackptr -= PAGE_SIZE;
-					
-					struct pte *entry = pte_init();
-					if(entry == NULL) {
-						kprintf("Out of kernel memory!!!\n");
-						TLB_Stat();
-						break;
-					}
-
-					entry->ppageaddr = get_ppages(1, 0, 0);
-					entry->permissions = set_permissions(1, 1, 0); /* RW_ */
-					if(entry->ppageaddr == 0 ) {
-						pte_destroy(entry);
-						kprintf("Out of memory :((\n");
-						TLB_Stat();
-						break;
-					}
-					
-					pt_add(as->as_pagetable, as->as_stackptr, entry);
-
-					/* Put address into the TLB */
-					int idx;
-					u_int32_t entryhi = as->as_stackptr;
-					u_int32_t entrylo = entry->ppageaddr;
-					idx = TLB_Replace(entryhi, entrylo);
-					TLB_WriteDirty(idx, 1);
-					TLB_WriteValid(idx, 1);
-					TLB_Stat();
-					break;
-				}
-
-				kprintf("Fatal write fault at 0x%x\n", faultpage);
-				TLB_Stat();
-				splx(spl);
-				return EFAULT;
-			}
-			else {
-				if( is_writeable(entry->permissions) ) {
-					/* No page fault and has write permission. Add to TLB */
-					int idx;
-					u_int32_t entryhi = (faultaddress & PAGE_FRAME);
-					u_int32_t entrylo = entry->ppageaddr;
-					idx = TLB_Replace(entryhi, entrylo);
-					TLB_WriteDirty(idx, 1);
-					TLB_WriteValid(idx, 1);
-					//TLB_Stat();
-				}
-				else {
-					//TLB_Stat();
-					splx(spl);
-					return EFAULT;
-				}
-			}
+			retval = vm_writefault(as, faultentry, faultpage, is_pagefault, is_stack, is_loading);
 			break;
 
 		case VM_FAULT_READONLY:
-			/* This fault isn't useful right now. We will need it later tho when we do swapping */
-			splx(spl);
-			return EFAULT;
-			break;
+			panic("Cannot handle vm_fault_readonly!!");
 
 		default:
-			splx(spl);
-			return EINVAL;
+			retval = EINVAL;
 	}
 
 	splx(spl);
+	return retval;
+}
+
+
+/* Handles faults on reads */
+int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage, int is_pagefault, int is_stack, int is_loading)
+{
+	assert(curspl>0);
+	(void) is_stack;
+	// (void) is_loading;
+	// (void) as;
+	int idx;
+
+	/* While elf file is loading, give it whatever pages it needs */
+	if(is_loading && is_pagefault) {
+		struct pte *new_entry = pte_init();
+		if(new_entry == NULL) {
+			kprintf("Out of kernel memory in vmfault");
+			return ENOMEM;
+		}
+
+		new_entry->ppageaddr = get_ppages(1, 0, 0);
+		new_entry->permissions = set_permissions(1, 1, 0); /* RW_ */
+		if(new_entry->ppageaddr == 0 ) {
+			pte_destroy(new_entry);
+			kprintf("Out physical pages for stack\n");
+			return ENOMEM;
+		}
+
+		/* Insert entry into the page table */
+		pt_add(as->as_pagetable, faultpage, new_entry);
+
+		/* Add to the TLB */
+		u_int32_t entryhi = faultpage;
+		u_int32_t entrylo = new_entry->ppageaddr;
+		idx = TLB_Replace(entryhi, entrylo);
+		TLB_WriteDirty(idx, 1);
+		TLB_WriteValid(idx, 1);
+		return 0;
+	}
+
+
+	/* Reading at a spot that results in a page fault is a segfault, at least right now */
+	if(is_pagefault) {
+		kprintf("Bad read at page 0x%x\n", faultpage);
+		return EFAULT;
+	}
+	else {
+		if(is_readable(faultentry->permissions)) {
+			u_int32_t entryhi = faultpage;
+			u_int32_t entrylo = faultentry->ppageaddr;
+			idx = TLB_Replace(entryhi, entrylo);
+			/* Update dirty and valid bits in TLB entry */
+			if(is_writeable(faultentry->permissions)) {
+				TLB_WriteDirty(idx, 1);
+			}
+			TLB_WriteValid(idx, 1);
+			return 0;
+		}
+		else {
+			kprintf("No permission to read at page 0x%x\n", faultpage);
+			return EFAULT;
+		}
+	}
+	panic("Should not reach here, vm_readfault");
+	return 0;
+}
+
+
+/* Handles faults on writes */
+int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage, int is_pagefault, int is_stack, int is_loading)
+{
+	assert(curspl>0);
+	int idx;
+	// (void) is_loading;
+
+	/* While elf file is loading, give it whatever pages it needs */
+	if(is_loading && is_pagefault) {
+		struct pte *new_entry = pte_init();
+		if(new_entry == NULL) {
+			kprintf("Out of kernel memory in vmfault");
+			return ENOMEM;
+		}
+
+		new_entry->ppageaddr = get_ppages(1, 0, 0);
+		new_entry->permissions = set_permissions(1, 1, 0); /* RW_ */
+		if(new_entry->ppageaddr == 0 ) {
+			pte_destroy(new_entry);
+			kprintf("Out physical pages for stack\n");
+			return ENOMEM;
+		}
+
+		/* Insert entry into the page table */
+		pt_add(as->as_pagetable, faultpage, new_entry);
+
+		/* Add to the TLB */
+		u_int32_t entryhi = faultpage;
+		u_int32_t entrylo = new_entry->ppageaddr;
+		idx = TLB_Replace(entryhi, entrylo);
+		TLB_WriteDirty(idx, 1);
+		TLB_WriteValid(idx, 1);
+		return 0;
+	}
+
+	/* Check to see if page fault is to the stack. If so we should allocate a page for the stack. */
+	if(is_pagefault && is_stack) {
+		struct pte *new_stack_entry = pte_init();
+		if(new_stack_entry == NULL) {
+			kprintf("Out of kernel memory in vmfault");
+			return ENOMEM;
+		}
+
+		new_stack_entry->ppageaddr = get_ppages(1, 0, 0);
+		new_stack_entry->permissions = set_permissions(1, 1, 0); /* RW_ */
+		if(new_stack_entry->ppageaddr == 0 ) {
+			pte_destroy(new_stack_entry);
+			kprintf("Out physical pages for stack\n");
+			return ENOMEM;
+		}
+
+		/* Insert entry into the page table */
+		as->as_stackptr -= PAGE_SIZE;
+		assert(faultpage == as->as_stackptr);
+		pt_add(as->as_pagetable, as->as_stackptr, new_stack_entry);
+
+		/* Add to the TLB */
+		u_int32_t entryhi = as->as_stackptr;
+		u_int32_t entrylo = new_stack_entry->ppageaddr;
+		idx = TLB_Replace(entryhi, entrylo);
+		TLB_WriteDirty(idx, 1);
+		TLB_WriteValid(idx, 1);
+		return 0;
+	}
+
+	/* Illegal write to unallocated memory. Segfault. */
+	if(is_pagefault && !is_stack) {
+		kprintf("Bad write to page 0x%x\n", faultpage);
+		return EFAULT;
+	}
+
+	/* If not page fault, check permissions then add to the TLB */
+	if(!is_pagefault) {
+		if( is_writeable(faultentry->permissions) ) {
+			u_int32_t entryhi = faultpage;
+			u_int32_t entrylo = faultentry->ppageaddr;
+			idx = TLB_Replace(entryhi, entrylo);
+			TLB_WriteDirty(idx, 1);
+			TLB_WriteValid(idx, 1);
+			return 0;
+		}
+		else {
+			kprintf("No permission to write to page 0x%x\n", faultpage);
+			return EFAULT;
+		}
+	}
+
+	panic("Should not reach here, vm_writefault");
 	return 0;
 }
 

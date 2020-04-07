@@ -267,9 +267,9 @@ as_copy(struct addrspace *old, struct addrspace **ret)
  * 
  * This function will most likely be deprecated when we start doing load on demand
  * 
- * Note: Permissions are set to _W_. In complete load we set them to what they should be.
+ * Note: Permissions are set to RWX. In complete load we set them to what they should be.
  * This is because we need to actually load the code and data segments into memory first,
- * which requires _W_ priviledges.
+ * which requires RWX priviledges.
  */ 
 int
 as_prepare_load(struct addrspace *as)
@@ -293,7 +293,7 @@ as_prepare_load(struct addrspace *as)
 			return ENOMEM;	/* Don't destroy addrspace because curthread->t_vmspace is destroyed in thread_exit */
 		}
 		/* Update permissions */
-		entry->permissions = set_permissions(0, 1, 0); /* _W_ */
+		entry->permissions = set_permissions(1, 1, 1); /* _W_ */
 	}
 
 	/* Data segment */
@@ -307,7 +307,7 @@ as_prepare_load(struct addrspace *as)
 			return ENOMEM;
 		}
 		/* Update permissions */
-		entry->permissions = set_permissions(0, 1, 0); /* _W_ */
+		entry->permissions = set_permissions(1, 1, 1); /* _W_ */
 	}
 
 	return 0;
@@ -427,6 +427,7 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 
 /*
  * Set the permissions to the proper values.
+ * This is called after all the segments are loaded
  */
 int
 as_complete_load(struct addrspace *as)

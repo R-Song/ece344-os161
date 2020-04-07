@@ -123,6 +123,11 @@ int		  		  as_prepare_load(struct addrspace *as);
 int		  		  as_complete_load(struct addrspace *as);
 int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
 
+int is_vaddrcode(struct addrspace *as, vaddr_t vaddr);
+int is_vaddrdata(struct addrspace *as, vaddr_t vaddr);
+int is_vaddrheap(struct addrspace *as, vaddr_t vaddr);
+int is_vaddrstack(struct addrspace *as, vaddr_t vaddr);
+
 
 /*
  * Functions in loadelf.c

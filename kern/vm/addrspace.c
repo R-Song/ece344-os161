@@ -208,17 +208,17 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	}
 
 	/* Set every single virtual address mapping to 0, this will change when we do copy on write */
-	vaddr_t i = 0;
+	vaddr_t vaddr = 0;
 	while(1) {
 		/* Should never be a page with vaddr_t 0 */
-		i = pt_getnext(new->as_pagetable, i);
-		if(i==0) {
+		vaddr = pt_getnext(new->as_pagetable, vaddr);
+		if(vaddr==0) {
 			break; /* Been through all the pages */
 		}
-		assert(i < USERTOP); /* Should not ever go over user virtual address space */
+		assert(vaddr < USERTOP); /* Should not ever go over user virtual address space */
 
 		/* Allocate a physical page for this pte */
-		struct pte *entry = pt_get(new->as_pagetable, i);
+		struct pte *entry = pt_get(new->as_pagetable, vaddr);
 		entry->ppageaddr = 0;
 	}
 
@@ -228,15 +228,15 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	 */
 	while(1) {
 		/* Should never be a page with vaddr_t 0 */
-		i = pt_getnext(new->as_pagetable, i);
-		if(i==0) {
+		vaddr = pt_getnext(new->as_pagetable, vaddr);
+		if(vaddr==0) {
 			break; /* Been through all the pages */
 		}
-		assert(i < USERTOP); /* Should not ever go over user virtual address space */
+		assert(vaddr < USERTOP); /* Should not ever go over user virtual address space */
 
 		/* Get PTE from old as and new as */
-		struct pte *old_entry = pt_get(old->as_pagetable, i);
-		struct pte *new_entry = pt_get(new->as_pagetable, i);
+		struct pte *old_entry = pt_get(old->as_pagetable, vaddr);
+		struct pte *new_entry = pt_get(new->as_pagetable, vaddr);
 		assert(new_entry->ppageaddr == 0);
 
 		/* Allocate a page */
@@ -244,6 +244,19 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		if(new_entry->ppageaddr == 0) {
 			as_destroy(new);
 			return ENOMEM;
+		}
+
+		/* Update permissions */
+		if( is_vaddrcode(new, vaddr) )
+			new_entry->permissions = new->as_code->permissions;
+		else if( is_vaddrdata(new, vaddr) )
+			new_entry->permissions = new->as_data->permissions;
+		else if( is_vaddrheap(new, vaddr) )
+			new_entry->permissions = new->as_heap->permissions;
+		else if( is_vaddrstack(new, vaddr) )
+			new_entry->permissions = set_permissions(1, 1, 0); /* Stack permissions */
+		else {
+			panic("Unknown region. Memory is not managed properly.");
 		}
 
 		/*
@@ -273,43 +286,42 @@ as_copy(struct addrspace *old, struct addrspace **ret)
  */ 
 int
 as_prepare_load(struct addrspace *as)
-{
+{	
+	/* Do a sanity check */
+	assert(as->as_code->npages != 0);
+	assert(as->as_code->vbase != 0);
+
+	int spl = splhigh();
+
 	/* 
 	 * We have to allocate memory for code and data segments
 	 * Do this by adding entries into the page table
 	 */
 	unsigned i;
 	struct pte *entry;
-	vaddr_t addr;
+	vaddr_t vpageaddr;
 
 	/* Code segment */
-	for(i=0; i<as->as_code->npages; i++) {
-		entry = pte_init();
-		addr = (as->as_code->vbase + (i*PAGE_SIZE)); 
-		pt_add(as->as_pagetable, addr, entry);
-		/* Allocate a page for it */
-		entry->ppageaddr = get_ppages(1, 0, 0); /* Ask for one non-fixed user level page */	   
-		if(entry->ppageaddr == 0) {
-			return ENOMEM;	/* Don't destroy addrspace because curthread->t_vmspace is destroyed in thread_exit */
+	for(i=0; i<as->as_code->npages; i++) {	
+		vpageaddr = (as->as_code->vbase + (i*PAGE_SIZE));
+		entry = alloc_upage(as, vpageaddr);
+		if(entry == NULL) {
+			return ENOMEM;
 		}
-		/* Update permissions */
-		entry->permissions = set_permissions(1, 1, 1); /* _W_ */
+		entry->permissions = set_permissions(1, 1, 1); /* RWX */
 	}
 
 	/* Data segment */
 	for(i=0; i<as->as_data->npages; i++) {
-		entry = pte_init();
-		addr = (as->as_data->vbase + (i*PAGE_SIZE)); 
-		pt_add(as->as_pagetable, addr, entry);
-		/* Allocate a page for it */
-		entry->ppageaddr = get_ppages(1, 0, 0);
-		if(entry->ppageaddr == 0) {
+		vpageaddr = (as->as_data->vbase + (i*PAGE_SIZE));
+		entry = alloc_upage(as, vpageaddr);
+		if(entry == NULL) {
 			return ENOMEM;
 		}
-		/* Update permissions */
-		entry->permissions = set_permissions(1, 1, 1); /* _W_ */
+		entry->permissions = set_permissions(1, 1, 1); /* RWX */
 	}
 
+	splx(spl);
 	return 0;
 }
 
@@ -447,13 +459,18 @@ as_complete_load(struct addrspace *as)
 	for(i=0; i<as->as_data->npages; i++) {
 		addr = (as->as_data->vbase + (i*PAGE_SIZE)); 
 		entry = pt_get(as->as_pagetable, addr);
-		entry->permissions = as->as_data->permissions; /* _W_ */
+		entry->permissions = as->as_data->permissions;
 	}
+
+	/* Flush TLB as all addresses in TLB are allowed to write */
+	TLB_Flush();
 
 	return 0;
 }
 
-
+/*
+ * Initialize the stack pointer
+ */
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
@@ -463,4 +480,47 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	
 	return 0;
 }
+
+/* Simple helpers to determine the region of memory that we reside in */
+int is_vaddrcode(struct addrspace *as, vaddr_t vaddr)
+{
+	vaddr_t region_start = as->as_code->vbase;
+	vaddr_t region_end = as->as_code->vbase + (as->as_code->npages)*PAGE_SIZE;
+	if( (vaddr >= region_start) && (vaddr < region_end) ) {
+		return 1;
+	}
+	return 0;
+}
+
+int is_vaddrdata(struct addrspace *as, vaddr_t vaddr)
+{
+	vaddr_t region_start = as->as_data->vbase;
+	vaddr_t region_end = as->as_data->vbase + (as->as_data->npages)*PAGE_SIZE;
+	if( (vaddr >= region_start) && (vaddr < region_end) ) {
+		return 1;
+	}
+	return 0;
+}
+
+int is_vaddrheap(struct addrspace *as, vaddr_t vaddr)
+{
+	vaddr_t region_start = as->as_heap->vbase;
+	vaddr_t region_end = as->as_heap->vbase + (as->as_heap->npages)*PAGE_SIZE;
+	if( (vaddr >= region_start) && (vaddr < region_end) ) {
+		return 1;
+	}
+	return 0;
+}
+
+int is_vaddrstack(struct addrspace *as, vaddr_t vaddr)
+{
+	vaddr_t region_start = as->as_stackptr;
+	vaddr_t region_end = USERSTACK;
+	if( (vaddr >= region_start) && (vaddr < region_end) ) {
+		return 1;
+	}
+	return 0;
+}
+
+
 

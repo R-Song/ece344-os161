@@ -66,6 +66,62 @@ free_kpages(vaddr_t addr)
 }
 
 
+/* 
+ * alloc_upages()
+ * Allocate user pages. High level interface to pagetables and coremap.
+ * Makes sure pagetables are consistent with coremap
+ * Returns the new page table entry on success and NULL on failure
+ */
+struct pte *
+alloc_upage(struct addrspace *as, vaddr_t vaddr)
+{
+	assert(vaddr%PAGE_SIZE == 0);
+	pagetable_t pt = as->as_pagetable;
+
+	/* Create a page table entry */
+	struct pte *new_entry = pte_init();
+	if(new_entry == NULL) {
+		return NULL;
+	}
+
+	/* Get physical page from coremap */
+	new_entry->ppageaddr = get_ppages(1, 0, 0);
+	if(new_entry->ppageaddr == 0) {
+		pte_destroy(new_entry);
+		return NULL;
+	}
+
+	/* Add page table entry to the page table */
+	pt_add(pt, vaddr, new_entry);
+
+	return new_entry;
+}
+
+/*
+ * free_upages()
+ * Free user pages. 
+ */
+void
+free_upage(struct addrspace *as, vaddr_t vaddr)
+{
+	assert(vaddr%PAGE_SIZE == 0);
+	pagetable_t pt = as->as_pagetable;
+
+	/* Get the page from the page table */
+	struct pte* entry = pt_get(pt, vaddr);
+	assert(entry != NULL);
+
+	/* Free page from coremap */
+	free_ppages(entry->ppageaddr);
+
+	/* Remove the page from the pagetable */
+	pt_remove(pt, vaddr);
+
+	/* Deallocate the page table entry */
+	pte_destroy(entry);
+}
+
+
 /*
  * vm_fault()
  * Handles TLB faults. A TLB faults occur when hardware does not know how to translate
@@ -150,38 +206,9 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage
 {
 	assert(curspl>0);
 	(void) is_stack;
-	// (void) is_loading;
-	// (void) as;
+	(void) is_loading;
+	(void) as;
 	int idx;
-
-	/* While elf file is loading, give it whatever pages it needs */
-	if(is_loading && is_pagefault) {
-		struct pte *new_entry = pte_init();
-		if(new_entry == NULL) {
-			kprintf("Out of kernel memory in vmfault");
-			return ENOMEM;
-		}
-
-		new_entry->ppageaddr = get_ppages(1, 0, 0);
-		new_entry->permissions = set_permissions(1, 1, 0); /* RW_ */
-		if(new_entry->ppageaddr == 0 ) {
-			pte_destroy(new_entry);
-			kprintf("Out physical pages for stack\n");
-			return ENOMEM;
-		}
-
-		/* Insert entry into the page table */
-		pt_add(as->as_pagetable, faultpage, new_entry);
-
-		/* Add to the TLB */
-		u_int32_t entryhi = faultpage;
-		u_int32_t entrylo = new_entry->ppageaddr;
-		idx = TLB_Replace(entryhi, entrylo);
-		TLB_WriteDirty(idx, 1);
-		TLB_WriteValid(idx, 1);
-		return 0;
-	}
-
 
 	/* Reading at a spot that results in a page fault is a segfault, at least right now */
 	if(is_pagefault) {
@@ -190,9 +217,7 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage
 	}
 	else {
 		if(is_readable(faultentry->permissions)) {
-			u_int32_t entryhi = faultpage;
-			u_int32_t entrylo = faultentry->ppageaddr;
-			idx = TLB_Replace(entryhi, entrylo);
+			idx = TLB_Replace(faultpage, faultentry->ppageaddr);
 			/* Update dirty and valid bits in TLB entry */
 			if(is_writeable(faultentry->permissions)) {
 				TLB_WriteDirty(idx, 1);
@@ -215,61 +240,22 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpag
 {
 	assert(curspl>0);
 	int idx;
-	// (void) is_loading;
-
-	/* While elf file is loading, give it whatever pages it needs */
-	if(is_loading && is_pagefault) {
-		struct pte *new_entry = pte_init();
-		if(new_entry == NULL) {
-			kprintf("Out of kernel memory in vmfault");
-			return ENOMEM;
-		}
-
-		new_entry->ppageaddr = get_ppages(1, 0, 0);
-		new_entry->permissions = set_permissions(1, 1, 0); /* RW_ */
-		if(new_entry->ppageaddr == 0 ) {
-			pte_destroy(new_entry);
-			kprintf("Out physical pages for stack\n");
-			return ENOMEM;
-		}
-
-		/* Insert entry into the page table */
-		pt_add(as->as_pagetable, faultpage, new_entry);
-
-		/* Add to the TLB */
-		u_int32_t entryhi = faultpage;
-		u_int32_t entrylo = new_entry->ppageaddr;
-		idx = TLB_Replace(entryhi, entrylo);
-		TLB_WriteDirty(idx, 1);
-		TLB_WriteValid(idx, 1);
-		return 0;
-	}
+	(void) is_loading;
 
 	/* Check to see if page fault is to the stack. If so we should allocate a page for the stack. */
 	if(is_pagefault && is_stack) {
-		struct pte *new_stack_entry = pte_init();
+		struct pte *new_stack_entry = alloc_upage(as, faultpage);
 		if(new_stack_entry == NULL) {
-			kprintf("Out of kernel memory in vmfault");
+			kprintf("Out of memory while creating stack");
 			return ENOMEM;
 		}
-
-		new_stack_entry->ppageaddr = get_ppages(1, 0, 0);
-		new_stack_entry->permissions = set_permissions(1, 1, 0); /* RW_ */
-		if(new_stack_entry->ppageaddr == 0 ) {
-			pte_destroy(new_stack_entry);
-			kprintf("Out physical pages for stack\n");
-			return ENOMEM;
-		}
-
-		/* Insert entry into the page table */
+		
 		as->as_stackptr -= PAGE_SIZE;
 		assert(faultpage == as->as_stackptr);
-		pt_add(as->as_pagetable, as->as_stackptr, new_stack_entry);
+		new_stack_entry->permissions = set_permissions(1, 1, 0);
 
 		/* Add to the TLB */
-		u_int32_t entryhi = as->as_stackptr;
-		u_int32_t entrylo = new_stack_entry->ppageaddr;
-		idx = TLB_Replace(entryhi, entrylo);
+		idx = TLB_Replace(faultpage, new_stack_entry->ppageaddr);
 		TLB_WriteDirty(idx, 1);
 		TLB_WriteValid(idx, 1);
 		return 0;
@@ -284,9 +270,7 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpag
 	/* If not page fault, check permissions then add to the TLB */
 	if(!is_pagefault) {
 		if( is_writeable(faultentry->permissions) ) {
-			u_int32_t entryhi = faultpage;
-			u_int32_t entrylo = faultentry->ppageaddr;
-			idx = TLB_Replace(entryhi, entrylo);
+			idx = TLB_Replace(faultpage, faultentry->ppageaddr);
 			TLB_WriteDirty(idx, 1);
 			TLB_WriteValid(idx, 1);
 			return 0;

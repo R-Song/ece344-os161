@@ -27,11 +27,11 @@
 #define PT_FIRST_LAYER_SIZE 512
 #define PT_SECOND_LAYER_SIZE 1024
 #define PT_SECOND_LAYER_OFFSET 10
-#define PT_SECOND_LAYER_MASK 0x000007ff     /* bottom 10 bits */
+#define PT_SECOND_LAYER_MASK 0x000003ff     /* bottom 10 bits */
 
-int pt_vaddr_to_first_index(vaddr_t addr);
-int pt_vaddr_to_second_index(vaddr_t addr);
-vaddr_t idx_to_vaddr(int first_idx, int second_idx);
+u_int32_t pt_vaddr_to_first_index(vaddr_t addr);
+u_int32_t pt_vaddr_to_second_index(vaddr_t addr);
+vaddr_t idx_to_vaddr(u_int32_t first_idx, u_int32_t second_idx);
 
 /*
  * page table entry (pte)

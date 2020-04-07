@@ -30,4 +30,8 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpag
 vaddr_t alloc_kpages(int npages);
 void free_kpages(vaddr_t addr);
 
+/* Allocate/free user pages */
+struct pte *alloc_upage(struct addrspace *as, vaddr_t vaddr);
+void free_upage(struct addrspace *as, vaddr_t vaddr);
+
 #endif /* _VM_H_ */

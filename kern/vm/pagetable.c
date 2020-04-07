@@ -14,16 +14,16 @@
  */
 
 /* Machine dependant stuff */
-int pt_vaddr_to_first_index(vaddr_t addr) {
+u_int32_t pt_vaddr_to_first_index(vaddr_t addr) {
     int idx = ((addr >> PAGE_OFFSET) >> PT_SECOND_LAYER_OFFSET);
     return idx;
 }
-int pt_vaddr_to_second_index(vaddr_t addr) {
+u_int32_t pt_vaddr_to_second_index(vaddr_t addr) {
     int idx = ((addr >> PAGE_OFFSET) & PT_SECOND_LAYER_MASK);
     return idx;
 }
-vaddr_t idx_to_vaddr(int first_idx, int second_idx) {
-    return ( (first_idx << (PAGE_OFFSET+10)) | (second_idx << PAGE_OFFSET) );
+vaddr_t idx_to_vaddr(u_int32_t first_idx, u_int32_t second_idx) {
+    return ( ((first_idx << (PAGE_OFFSET)) << PT_SECOND_LAYER_OFFSET) | (second_idx << PAGE_OFFSET) );
 }
 
 /* pte_init() */
@@ -62,7 +62,7 @@ void pte_copy(struct pte *src, struct pte *dest)
 /* pt_init() */
 pagetable_t pt_init() 
 {
-    int i;
+    unsigned i;
     pagetable_t pt;
 
     pt = (pagetable_t)kmalloc(PT_FIRST_LAYER_SIZE * sizeof(struct pte **));
@@ -84,9 +84,9 @@ pagetable_t pt_init()
  */
 int pt_add(pagetable_t pt, vaddr_t addr, struct pte *entry) 
 {
-    int i;
-    int first_layer_idx = pt_vaddr_to_first_index(addr);
-    int second_layer_idx = pt_vaddr_to_second_index(addr);
+    unsigned i;
+    u_int32_t first_layer_idx = pt_vaddr_to_first_index(addr);
+    u_int32_t second_layer_idx = pt_vaddr_to_second_index(addr);
     
     if(pt[first_layer_idx] == NULL) {
         pt[first_layer_idx] = (struct pte **)kmalloc(PT_SECOND_LAYER_SIZE * sizeof(struct pte *));
@@ -108,8 +108,8 @@ int pt_add(pagetable_t pt, vaddr_t addr, struct pte *entry)
  * Get a pagetable entry
  */
 struct pte *pt_get(pagetable_t pt, vaddr_t addr) {
-    int first_layer_idx = pt_vaddr_to_first_index(addr);
-    int second_layer_idx = pt_vaddr_to_second_index(addr);
+    u_int32_t first_layer_idx = pt_vaddr_to_first_index(addr);
+    u_int32_t second_layer_idx = pt_vaddr_to_second_index(addr);
 
     if(pt[first_layer_idx] == NULL) {
         return NULL;
@@ -124,13 +124,13 @@ struct pte *pt_get(pagetable_t pt, vaddr_t addr) {
  */
 vaddr_t pt_getnext(pagetable_t pt, vaddr_t addr) {
 
-    int first_layer_idx = pt_vaddr_to_first_index(addr);
-    int second_layer_idx = pt_vaddr_to_second_index(addr);
+    u_int32_t first_layer_idx = pt_vaddr_to_first_index(addr);
+    u_int32_t second_layer_idx = pt_vaddr_to_second_index(addr);
 
-    int i, j;
+    unsigned i, j;
     if(pt[first_layer_idx] != NULL) {
         for(j=second_layer_idx+1; j<PT_SECOND_LAYER_SIZE; j++) {
-            if(pt[first_layer_idx][i] != NULL)
+            if(pt[first_layer_idx][j] != NULL)
                 return idx_to_vaddr(first_layer_idx, j);
         }
     }
@@ -160,7 +160,7 @@ vaddr_t pt_getnext(pagetable_t pt, vaddr_t addr) {
  * Returns on error.
  */
 int pt_copy(pagetable_t src, pagetable_t dest) {
-    int i, j;
+    unsigned i, j;
     struct pte *entry;
     for(i=0; i<PT_FIRST_LAYER_SIZE; i++) {
         if(src[i] == NULL)
@@ -174,9 +174,10 @@ int pt_copy(pagetable_t src, pagetable_t dest) {
                     if(entry == NULL) {
                         return ENOMEM;
                     }
+                    /* Copy the pte and then add it to the new page table */
+                    pte_copy(src[i][j], entry);
+                    pt_add(dest, idx_to_vaddr(i, j) ,entry);
                     dest[i][j] = entry;
-                    /* Copy over the pte fields */
-                    pte_copy(src[i][j], dest[i][j]);
                 }
             }
         }   
@@ -189,8 +190,8 @@ int pt_copy(pagetable_t src, pagetable_t dest) {
  * Remove a pagetable entry
  */
 void pt_remove(pagetable_t pt, vaddr_t addr) {
-    int first_layer_idx = pt_vaddr_to_first_index(addr);
-    int second_layer_idx = pt_vaddr_to_second_index(addr); 
+    u_int32_t first_layer_idx = pt_vaddr_to_first_index(addr);
+    u_int32_t second_layer_idx = pt_vaddr_to_second_index(addr); 
 
     if(pt[first_layer_idx] == NULL || pt[first_layer_idx][second_layer_idx] == NULL) {
         return;
@@ -210,7 +211,7 @@ void pt_remove(pagetable_t pt, vaddr_t addr) {
  * right now just destroy all the pages, no copy on write right now
  */
 void pt_destroy(pagetable_t pt) {
-    int i, j;
+    unsigned i, j;
     /* Deallocate everything */
     for(i=0; i<PT_FIRST_LAYER_SIZE; i++) {
         if(pt[i] == NULL)

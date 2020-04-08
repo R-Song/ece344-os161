@@ -458,47 +458,96 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 	/* Retrieve current address space */
 	struct addrspace *as = curthread->t_vmspace;
 	assert(as != NULL);								/* This is a user process, it must have an addrspace */
+	vaddr_t heapstart = as->as_heapstart;
+	vaddr_t old_heapend = as->as_heapend;
+	size_t old_heapsize = ((old_heapend - heapstart + PAGE_SIZE-1) >> PAGE_OFFSET); /* size of heap in pages */
 
-	vaddr_t old_heapstart = as->as_heap->vbase;
-	vaddr_t old_heapend = as->as_heap->vbase + ((as->as_heap->npages) * PAGE_SIZE);
-
-	size_t num_pages_requested = (amount*4)/PAGE_SIZE;
-
-	/* Ensure that amount is page aligned and will not decrement break point of heap below its start point */
-	if( ( old_heapend + amount*4 < old_heapstart ) || ( (amount*4)%PAGE_SIZE != 0) ){
-		*retval = -1;
+	/* Ensure that amount is not too negative. The operations looks weird because we are working with unsigned ints */
+	if( (amount < 0) && (old_heapend - heapstart < (unsigned)amount*-1) ){
 		splx(spl);
+		*retval = -1;
 		return EINVAL;	
 	} 
 	
-	/* Allocate the pages requested by the user */
-	for(i=0; i<num_pages_requested; i++){
-		vaddr = old_heapend + i*PAGE_SIZE;
-		new_entry = alloc_upage(as, vaddr);
-		if(new_entry == NULL) {
-			goto sbrk_failed;
-		}
-		new_entry->permissions = set_permissions(1, 1, 0);
+	/* Check if we should be allocating or freeing memory */
+	if(amount == 0) 
+	{
+		splx(spl);
+		*retval = old_heapend;
+		return 0;
 	}
-	/* Update heap breakpoint */
-	as->as_heap->npages += num_pages_requested;
-	*retval = old_heapend;
-	splx(spl);
-	return 0;
+	else if(amount > 0) 
+	{
+		/* Check to see if allocation requires a new page */
+		vaddr_t new_heapend = old_heapend + amount;
+		vaddr_t new_heapsize = ((new_heapend - heapstart + PAGE_SIZE-1) >> PAGE_OFFSET);
 
-sbrk_failed:
-	/* Allocate failed along the way. Free all allocated pages */
-	for(i=0; i < num_pages_requested; i++){
-		vaddr = old_heapend + i*PAGE_SIZE;
-		new_entry = pt_get(as->as_pagetable, vaddr);
-		if(new_entry == NULL) {
-			continue;
+		if(new_heapsize == old_heapsize) 
+		{
+			as->as_heapend += amount;
+			splx(spl);
+			*retval = old_heapend;
+			return 0;
 		}
-		free_upage(as, vaddr);
+		else
+		{
+			size_t num_pages_requested = new_heapsize - old_heapsize;
+			/* Allocate the pages requested by the user */
+			for(i=0; i<num_pages_requested; i++) {
+				vaddr = ((old_heapend + i*PAGE_SIZE + PAGE_SIZE-1) & PAGE_FRAME);
+				new_entry = alloc_upage(as, vaddr);
+				if(new_entry == NULL) {
+					goto sbrk_failed;
+				}
+				new_entry->permissions = set_permissions(1, 1, 0);
+			}
+			/* Update heap breakpoint */
+			as->as_heapend += amount;
+			*retval = old_heapend;
+			splx(spl);
+			return 0;
+
+		sbrk_failed:
+			/* Allocate failed along the way. Free all allocated pages */
+			for(i=0; i < num_pages_requested; i++){
+				vaddr = ((old_heapend + i*PAGE_SIZE + PAGE_SIZE-1) & PAGE_FRAME);
+				new_entry = pt_get(as->as_pagetable, vaddr);
+				if(new_entry == NULL) {
+					continue;
+				}
+				free_upage(as, vaddr);
+			}
+			*retval = -1;
+			splx(spl);
+			return ENOMEM;	
+		}
 	}
-	*retval = -1;
-	splx(spl);
-	return ENOMEM;	
+	else if(amount < 0)
+	{
+		/* Check to see if deallocation allows us to free a page */
+		vaddr_t new_heapend = old_heapend + amount;
+		size_t new_heapsize = ((new_heapend - heapstart + PAGE_SIZE-1) >> PAGE_OFFSET);
+		if(new_heapsize == old_heapsize) {
+			as->as_heapend += amount;
+			splx(spl);
+			*retval = old_heapend;
+			return 0;
+		}
+		else
+		{
+			size_t num_pages_dealloc = old_heapsize - new_heapsize;
+			for(i=0; i<num_pages_dealloc; i++) {
+				vaddr = ((old_heapend - i*PAGE_SIZE) & PAGE_FRAME);
+				free_upage(as, vaddr);
+			}
+			as->as_heapend += amount;
+			splx(spl);
+			*retval = old_heapend;
+			return 0;
+		}
+	}
+	panic("Should not reach here");
+	return 0;
 }
 
 #endif

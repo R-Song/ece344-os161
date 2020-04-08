@@ -239,6 +239,7 @@ void pt_dump(pagetable_t pt)
 {
     unsigned i, j;
     vaddr_t vaddr;
+    kprintf("\n");
     for(i=0; i<PT_FIRST_LAYER_SIZE; i++) {
         if(pt[i] == NULL)
             continue;
@@ -253,6 +254,7 @@ void pt_dump(pagetable_t pt)
             }
         }
     }   
+    kprintf("\n");
 }
 
 

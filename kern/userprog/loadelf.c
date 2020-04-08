@@ -189,10 +189,7 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 
 #if !OPT_DUMBVM
 	/* Now we have to initialize the heap */
-	struct addrspace *as = curthread->t_vmspace;
-	as->as_heap->vbase = (as->as_data->vbase + (as->as_data->npages)*PAGE_SIZE); /* Heap starts after data segment */
-	as->as_heap->npages = 0;
-	as->as_heap->permissions = set_permissions(1, 1, 0); /* RW_ */
+	as_define_heap(curthread->t_vmspace);
 #endif
 
 	/* This does all the page allocations at once! This will have to change when we load on demand... */
@@ -244,12 +241,14 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 	}
 
 	*entrypoint = eh.e_entry;
-	kprintf("Finished loading\n");
+	//kprintf("Finished loading\n");
 
 #if !OPT_DUMBVM
-	pt_dump(curthread->t_vmspace->as_pagetable);
+	//pt_dump(curthread->t_vmspace->as_pagetable);
+	//region_dump(curthread->t_vmspace);
 #endif
-	TLB_Stat();
+	//TLB_Stat();
+	//region_dump(curthread->t_vmspace);
 
 	return 0;
 }

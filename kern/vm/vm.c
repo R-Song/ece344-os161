@@ -144,8 +144,8 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 {	
 	int spl = splhigh();
 
-	kprintf("faultaddress at 0x%08x\n", faultaddress);
-	TLB_Stat();
+	//kprintf("faultaddress at 0x%08x\n", faultaddress);
+	//TLB_Stat();
 
 	int is_pagefault;
 	int is_stack;
@@ -177,7 +177,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		!is_vaddrheap(as, faultpage) && 
 		!is_vaddrstack(as, faultpage) && 
 		!is_stack ) {
-			kprintf("Page 0x%08x is not in a valid region\n", faultpage);
+			//kprintf("Page 0x%08x is not in a valid region\n", faultpage);
 			return EFAULT;
 		}
 
@@ -216,7 +216,7 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage
 
 	/* Reading at a spot that results in a page fault is a segfault, at least right now */
 	if(is_pagefault) {
-		kprintf("Bad read at page 0x%x\n", faultpage);
+		//kprintf("Bad read at page 0x%x\n", faultpage);
 		return EFAULT;
 	}
 	else {
@@ -231,7 +231,7 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage
 			return 0;
 		}
 		else {
-			kprintf("No permission to read at page 0x%x\n", faultpage);
+			//kprintf("No permission to read at page 0x%x\n", faultpage);
 			return EFAULT;
 		}
 	}
@@ -250,7 +250,7 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpag
 	if(is_pagefault && is_stack) {
 		struct pte *new_stack_entry = alloc_upage(as, faultpage);
 		if(new_stack_entry == NULL) {
-			kprintf("Out of memory while creating stack");
+			//kprintf("Out of memory while creating stack");
 			return ENOMEM;
 		}
 		
@@ -267,7 +267,7 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpag
 
 	/* Illegal write to unallocated memory. Segfault. */
 	if(is_pagefault && !is_stack) {
-		kprintf("Bad write to page 0x%x\n", faultpage);
+		//kprintf("Bad write to page 0x%x\n", faultpage);
 		return EFAULT;
 	}
 
@@ -280,7 +280,7 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpag
 			return 0;
 		}
 		else {
-			kprintf("No permission to write to page 0x%x\n", faultpage);
+			//kprintf("No permission to write to page 0x%x\n", faultpage);
 			return EFAULT;
 		}
 	}

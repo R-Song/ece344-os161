@@ -317,3 +317,63 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	*ret = new;
 	return 0;
 }
+
+
+/* Debug function */
+void region_dump(struct addrspace *as) 
+{
+#if !OPT_DUMBVM
+
+	unsigned i, j;
+	u_int32_t *vaddr;
+	struct pte *entry;
+
+	int spl = splhigh();
+	/* Print segments */
+	kprintf("Printing Code Segment \n\n");
+	for(i=0; i<as->as_code->npages; i++) {
+		kprintf("Page %d:\n", i);
+		/* Get the physical page */
+		entry = pt_get(as->as_pagetable, (as->as_code->vbase+i*PAGE_SIZE) );
+		assert(entry != NULL);
+
+		/* Convert address to kernel virtual address and cast it to a pointer */
+		vaddr = (u_int32_t *)PADDR_TO_KVADDR(entry->ppageaddr);
+
+		/* 4096/32 = 128 */
+		for(j=0; j<(PAGE_SIZE/sizeof(u_int32_t)); j++) {
+			kprintf("%x", vaddr[j]);
+		}
+		kprintf("\n");
+	}
+	splx(spl);
+
+#else
+
+	unsigned i, j;
+	u_int32_t *vaddr;
+
+	int spl = splhigh();
+
+	/* Print segments */
+	kprintf("Printing Code Segment \n\n");
+	for(i=0; i<as->as_npages1; i++) {
+		kprintf("Page %d:\n", i);
+		
+		/* Convert address to kernel virtual address and cast it to a pointer */
+		vaddr = (u_int32_t *)PADDR_TO_KVADDR(as->as_pbase1 + i*PAGE_SIZE);
+
+		/* 4096/32 = 128 */
+		for(j=0; j<(PAGE_SIZE/sizeof(u_int32_t)); j++) {
+			kprintf("%x", vaddr[j]);
+		}
+		kprintf("\n");
+	}
+	
+	splx(spl);
+
+#endif
+
+}
+
+

@@ -28,7 +28,8 @@ struct as_region {
 	permissions_t permissions;
 	/* Will need a lot more information for ondemand paging */
 };
-
+/* define the region */
+void region_dump(struct addrspace *as) ;
 
 /* Address space ID typdef */
 typedef u_int32_t asid_t;
@@ -62,10 +63,11 @@ struct addrspace {
 #else
 	/* If gypsies moved into the VM business */
 	pagetable_t as_pagetable;	/* page table */
-	struct as_region *as_code;	/* data segments */
-	struct as_region *as_data;
-	struct as_region *as_heap;
-	vaddr_t as_stackptr;
+	struct as_region *as_code;	/* code segment */
+	struct as_region *as_data;	/* data segment */
+	vaddr_t as_heapstart;		/* start of heap */
+	vaddr_t as_heapend;			/* end of heap */
+	vaddr_t as_stackptr;		/* stackptr */
 	asid_t as_asid;				/* addrspace tags for the TLB */
 	int as_asid_set;
 #endif
@@ -122,6 +124,7 @@ int               as_define_region(struct addrspace *as,
 int		  		  as_prepare_load(struct addrspace *as);
 int		  		  as_complete_load(struct addrspace *as);
 int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
+void 			  as_define_heap(struct addrspace *as);
 
 int is_vaddrcode(struct addrspace *as, vaddr_t vaddr);
 int is_vaddrdata(struct addrspace *as, vaddr_t vaddr);

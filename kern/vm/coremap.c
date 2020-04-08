@@ -51,7 +51,7 @@ void coremap_bootstrap()
     int num_ppages = (lastpaddr >> PAGE_OFFSET);
 
     /* Number of pages dedicated to fitting the coremap and its mutex */
-    int num_coremap_pages = ( (num_ppages*sizeof(struct coremap_entry) + sizeof(struct semaphore) + PAGE_SIZE) >> PAGE_OFFSET) ;
+    int num_coremap_pages = ( (num_ppages*sizeof(struct coremap_entry) + sizeof(struct semaphore) + PAGE_SIZE-1) >> PAGE_OFFSET) ;
 
     /* Initialize address of coremap */
     coremap = (struct coremap_entry *)PADDR_TO_KVADDR(firstpaddr);

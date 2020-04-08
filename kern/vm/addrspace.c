@@ -88,15 +88,6 @@ as_create(void)
 		return NULL;
 	}
 
-	as->as_heap = (struct as_region *)kmalloc(sizeof(struct as_region));
-	if(as->as_heap == NULL) {
-		kfree(as->as_data);
-		kfree(as->as_code);
-		pt_destroy(as->as_pagetable);
-		kfree(as);
-		return NULL;
-	}
-
 	/* Attempt to get an available asid. If possible. */
 	if(DEBUG_ASID_ENABLE) {
 		P(as_bitmap_mutex);
@@ -126,10 +117,8 @@ as_create(void)
 	as->as_data->npages = 0;
 	as->as_data->permissions = set_permissions(0, 0, 0);
 
-	as->as_heap->vbase = 0;
-	as->as_heap->npages = 0;
-	as->as_heap->permissions = set_permissions(0, 0, 0);
-
+	as->as_heapstart = 0;
+	as->as_heapend = 0;
 	as->as_stackptr = 0;
 
 	return as;
@@ -157,7 +146,6 @@ as_destroy(struct addrspace *as)
 	/* Destroy the regions, pagetable, and as */
 	kfree(as->as_code);
 	kfree(as->as_data);
-	kfree(as->as_heap);
 	pt_destroy(as->as_pagetable);
 	kfree(as);
 }
@@ -173,11 +161,13 @@ int
 as_copy(struct addrspace *old, struct addrspace **ret)
 {
 	int err;
+	int spl = splhigh();
 
 	/* Allocate space for new addrspace */
 	struct addrspace *new;
 	new = as_create();
 	if (new==NULL) {
+		splx(spl);
 		return ENOMEM;
 	}
 
@@ -190,10 +180,8 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	new->as_data->npages = old->as_data->npages;
 	new->as_data->permissions = old->as_data->permissions;
 
-	new->as_heap->vbase = old->as_heap->vbase;
-	new->as_heap->npages = old->as_heap->npages;
-	new->as_heap->permissions = old->as_heap->permissions;
-
+	new->as_heapstart = old->as_heapstart;
+	new->as_heapend = old->as_heapend;
 	new->as_stackptr = old->as_stackptr;
 
 	/* 
@@ -204,6 +192,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	err = pt_copy(old->as_pagetable, new->as_pagetable);
 	if(err) {
 		as_destroy(new);
+		splx(spl);
 		return ENOMEM;
 	}
 
@@ -243,6 +232,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		new_entry->ppageaddr = get_ppages(1, 0, 0); /* ask for 1 non-fixed user-page */
 		if(new_entry->ppageaddr == 0) {
 			as_destroy(new);
+			splx(spl);
 			return ENOMEM;
 		}
 
@@ -252,7 +242,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		else if( is_vaddrdata(new, vaddr) )
 			new_entry->permissions = new->as_data->permissions;
 		else if( is_vaddrheap(new, vaddr) )
-			new_entry->permissions = new->as_heap->permissions;
+			new_entry->permissions = set_permissions(1, 1, 0); /* Heap permissions */
 		else if( is_vaddrstack(new, vaddr) )
 			new_entry->permissions = set_permissions(1, 1, 0); /* Stack permissions */
 		else {
@@ -270,9 +260,10 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		assert(old_entry->ppageaddr != new_entry->ppageaddr);
 	}
 
-	pt_dump(new->as_pagetable);
+	// pt_dump(new->as_pagetable);
 
 	*ret = new;
+	splx(spl);
 	return 0;
 }
 
@@ -488,6 +479,16 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	return 0;
 }
 
+/* 
+ * Initialize the heap
+ */
+void
+as_define_heap(struct addrspace *as) {
+	as->as_heapstart = as->as_data->vbase + PAGE_SIZE*as->as_data->npages;
+	as->as_heapend = as->as_heapstart;
+}
+
+
 /* Simple helpers to determine the region of memory that we reside in */
 int is_vaddrcode(struct addrspace *as, vaddr_t vaddr)
 {
@@ -511,8 +512,8 @@ int is_vaddrdata(struct addrspace *as, vaddr_t vaddr)
 
 int is_vaddrheap(struct addrspace *as, vaddr_t vaddr)
 {
-	vaddr_t region_start = as->as_heap->vbase;
-	vaddr_t region_end = as->as_heap->vbase + (as->as_heap->npages)*PAGE_SIZE;
+	vaddr_t region_start = as->as_heapstart;
+	vaddr_t region_end = as->as_heapend;
 	if( (vaddr >= region_start) && (vaddr < region_end) ) {
 		return 1;
 	}
@@ -529,5 +530,62 @@ int is_vaddrstack(struct addrspace *as, vaddr_t vaddr)
 	return 0;
 }
 
+
+/* Debug function */
+void region_dump(struct addrspace *as) 
+{
+#if !OPT_DUMBVM
+
+	unsigned i, j;
+	u_int32_t *vaddr;
+	struct pte *entry;
+
+	int spl = splhigh();
+	/* Print segments */
+	kprintf("Printing Code Segment \n\n");
+	for(i=0; i<as->as_code->npages; i++) {
+		kprintf("Page %d:\n", i);
+		/* Get the physical page */
+		entry = pt_get(as->as_pagetable, (as->as_code->vbase+i*PAGE_SIZE) );
+		assert(entry != NULL);
+
+		/* Convert address to kernel virtual address and cast it to a pointer */
+		vaddr = (u_int32_t *)PADDR_TO_KVADDR(entry->ppageaddr);
+
+		/* 4096/32 = 128 */
+		for(j=0; j<(PAGE_SIZE/sizeof(u_int32_t)); j++) {
+			kprintf("%x", vaddr[j]);
+		}
+		kprintf("\n");
+	}
+	splx(spl);
+
+#else
+
+	unsigned i, j;
+	u_int32_t *vaddr;
+
+	int spl = splhigh();
+
+	/* Print segments */
+	kprintf("Printing Code Segment \n\n");
+	for(i=0; i<as->as_npages1; i++) {
+		kprintf("Page %d:\n", i);
+		
+		/* Convert address to kernel virtual address and cast it to a pointer */
+		vaddr = (u_int32_t *)PADDR_TO_KVADDR(as->pbase1 + i*PAGE_SIZE);
+
+		/* 4096/32 = 128 */
+		for(j=0; j<(PAGE_SIZE/sizeof(u_int32_t)); j++) {
+			kprintf("%x", vaddr[j]);
+		}
+		kprintf("\n");
+	}
+	
+	splx(spl);
+
+#endif
+
+}
 
 

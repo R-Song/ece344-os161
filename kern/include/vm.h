@@ -34,4 +34,9 @@ void free_kpages(vaddr_t addr);
 struct pte *alloc_upage(struct addrspace *as, vaddr_t vaddr);
 void free_upage(struct addrspace *as, vaddr_t vaddr);
 
+/* Debug function */
+#if OPT_DUMBVM
+void region_dump(struct addrspace *as);
+#endif
+
 #endif /* _VM_H_ */

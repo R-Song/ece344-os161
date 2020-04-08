@@ -82,5 +82,7 @@ void pt_remove(pagetable_t pt, vaddr_t vaddr);
 /* destroy page table */
 void pt_destroy(pagetable_t pt);
 
+/* dump all contents of pagetable to console */
+void pt_dump(pagetable_t pt);
 
 #endif /* _PAGETABLE_H_ */

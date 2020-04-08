@@ -116,7 +116,9 @@ mips_syscall(struct trapframe *tf)
 		break;
 
 		case SYS_sbrk:
+		#if !OPT_DUMBVM
 			err = sys_sbrk( (intptr_t)tf->tf_a0, &retval );
+		#endif
 		break;
 
 	    default:

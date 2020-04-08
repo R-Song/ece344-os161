@@ -144,6 +144,9 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 {	
 	int spl = splhigh();
 
+	kprintf("faultaddress at 0x%08x\n", faultaddress);
+	TLB_Stat();
+
 	int is_pagefault;
 	int is_stack;
 
@@ -174,8 +177,8 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		!is_vaddrheap(as, faultpage) && 
 		!is_vaddrstack(as, faultpage) && 
 		!is_stack ) {
-			kprintf("Page 0x%x is not in a valid region\n", faultpage);
-			return ENOMEM;
+			kprintf("Page 0x%08x is not in a valid region\n", faultpage);
+			return EFAULT;
 		}
 
 	/*

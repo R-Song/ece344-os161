@@ -445,6 +445,8 @@ execv_failed:
  * Strategy for implementation:
  * 	Round to the nearest page, then allocate space on the heap accordingly.
  */
+#if !OPT_DUMBVM
+
 int sys_sbrk(intptr_t amount, pid_t *retval)
 {
 	int spl = splhigh();
@@ -498,3 +500,5 @@ sbrk_failed:
 	splx(spl);
 	return ENOMEM;	
 }
+
+#endif

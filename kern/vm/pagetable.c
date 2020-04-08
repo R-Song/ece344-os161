@@ -234,4 +234,25 @@ void pt_destroy(pagetable_t pt) {
     kfree(pt);
 }
 
+/* Dump all contents of page table to console */
+void pt_dump(pagetable_t pt)
+{
+    unsigned i, j;
+    vaddr_t vaddr;
+    for(i=0; i<PT_FIRST_LAYER_SIZE; i++) {
+        if(pt[i] == NULL)
+            continue;
+        else {
+            for(j=0; j<PT_SECOND_LAYER_SIZE; j++) {
+                if(pt[i][j] == NULL)
+                    continue;
+                else {
+                    vaddr = idx_to_vaddr(i, j);
+                    kprintf("Vaddr: 0x%08x  |  Paddr: 0x%08x  |  Permissions: %d\n", vaddr, pt[i][j]->ppageaddr, pt[i][j]->permissions);
+                }
+            }
+        }
+    }   
+}
+
 

@@ -71,6 +71,8 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	spl = splhigh();
 
+	kprintf("faultaddress at 0x%08x\n", faultaddress);
+
 	faultaddress &= PAGE_FRAME;
 
 	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
@@ -241,11 +243,13 @@ as_prepare_load(struct addrspace *as)
 	assert(as->as_stackpbase == 0);
 
 	as->as_pbase1 = getppages(as->as_npages1);
+	kprintf("Allocated %u pages for code\n", as->as_npages1);
 	if (as->as_pbase1 == 0) {
 		return ENOMEM;
 	}
 
 	as->as_pbase2 = getppages(as->as_npages2);
+	kprintf("Allocated %u pages for data\n", as->as_npages2);
 	if (as->as_pbase2 == 0) {
 		return ENOMEM;
 	}

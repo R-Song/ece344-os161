@@ -227,6 +227,8 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
 
     /* Check to see if there are any pids available */
     if(!proc_pid_avail()) {
+        as_destroy(child_addrspace);
+        kfree(child_tf);
         return EAGAIN;
     }
 

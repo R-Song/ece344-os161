@@ -266,7 +266,11 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		memmove((void *)PADDR_TO_KVADDR(old_entry->ppageaddr), 
 				(const void *)PADDR_TO_KVADDR(new_entry->ppageaddr),
 				PAGE_SIZE);
+			
+		assert(old_entry->ppageaddr != new_entry->ppageaddr);
 	}
+
+	pt_dump(new->as_pagetable);
 
 	*ret = new;
 	return 0;
@@ -309,6 +313,7 @@ as_prepare_load(struct addrspace *as)
 			return ENOMEM;
 		}
 		entry->permissions = set_permissions(1, 1, 1); /* RWX */
+		//kprintf("Allocated space for code page #%u\n", i);
 	}
 
 	/* Data segment */
@@ -319,6 +324,7 @@ as_prepare_load(struct addrspace *as)
 			return ENOMEM;
 		}
 		entry->permissions = set_permissions(1, 1, 1); /* RWX */
+		//kprintf("Allocated space for data page #%u\n", i);
 	}
 
 	splx(spl);
@@ -433,6 +439,7 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 		return 0;		
 	}
 
+	panic("Too many regions! Not supported");
 	return 0;
 }
 
@@ -462,8 +469,8 @@ as_complete_load(struct addrspace *as)
 		entry->permissions = as->as_data->permissions;
 	}
 
-	/* Flush TLB as all addresses in TLB are allowed to write */
-	TLB_Flush();
+	/* Flush TLB as all TLB entries are dirty */
+	//TLB_Flush();
 
 	return 0;
 }

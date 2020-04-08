@@ -43,58 +43,66 @@ void TLB_WriteAsid(u_int32_t index, u_int32_t asid)
 /* Read and write to Valid and Dirty bits in TLBLO */
 int TLB_ReadValid(u_int32_t index) 
 {
+    u_int32_t ehi, elo;
+
     int spl = splhigh();
 
-    int valid_bit;
-    u_int32_t entryhi, entrylo;
-
-    TLB_Read(&entryhi, &entrylo, index);
-    valid_bit = ( (entrylo & TLBLO_VALID) >> 9);
-    assert(valid_bit == 0 || valid_bit == 1);
-
+    TLB_Read(&ehi, &elo, index);
+    if(elo & TLBLO_VALID) {
+        splx(spl);
+        return 1;
+    }
     splx(spl);
-    return valid_bit;
+    return 0;
 }
 
 void TLB_WriteValid(u_int32_t index, int value) 
 {
+    assert(value == 0 || value == 1);
+    u_int32_t ehi, elo;
+
     int spl = splhigh();
 
-    assert(value == 0 || value == 1);
-    u_int32_t entryhi, entrylo;
-
-    TLB_Read(&entryhi, &entrylo, index);
-    entrylo = ( (entrylo & (~TLBLO_VALID)) | (value << 9) ); /* Clear the valid bit, then set it to value */
-    TLB_Write(entryhi, entrylo, index);
+    TLB_Read(&ehi, &elo, index);
+    if(value == 1) 
+        elo |= TLBLO_VALID;
+    else {
+        elo &= ~TLBLO_VALID;
+    }
+    TLB_Write(ehi, elo, index);
 
     splx(spl);
 }
 
 int TLB_ReadDirty(u_int32_t index)
 {
+    u_int32_t ehi, elo;
+
     int spl = splhigh();
 
-    int dirty_bit;
-    u_int32_t entryhi, entrylo;
-
-    TLB_Read(&entryhi, &entrylo, index);
-    dirty_bit = ( (entrylo & TLBLO_DIRTY) >> 10);
-    assert(dirty_bit == 0 || dirty_bit == 1);
-
+    TLB_Read(&ehi, &elo, index);
+    if(elo & TLBLO_DIRTY) {
+        splx(spl);
+        return 1;
+    }
     splx(spl);
-    return dirty_bit;
+    return 0;
 }
 
 void TLB_WriteDirty(u_int32_t index, int value)
-{
+{  
+    assert(value == 0 || value == 1);
+    u_int32_t ehi, elo;
+
     int spl = splhigh();
 
-    assert(value == 0 || value == 1);
-    u_int32_t entryhi, entrylo;
-
-    TLB_Read(&entryhi, &entrylo, index);
-    entrylo = ( (entrylo & (~TLBLO_DIRTY)) | (value << 10) ); /* Clear the valid bit, then set it to value */
-    TLB_Write(entryhi, entrylo, index);
+    TLB_Read(&ehi, &elo, index);
+    if(value == 1) 
+        elo |= TLBLO_DIRTY;
+    else {
+        elo &= ~TLBLO_DIRTY;
+    }
+    TLB_Write(ehi, elo, index);
 
     splx(spl);
 }
@@ -119,20 +127,20 @@ void TLB_Flush()
 int TLB_Replace(u_int32_t entryhi, u_int32_t entrylo)
 {
     int spl, idx;
-    //u_int32_t ehi, elo;
+    u_int32_t ehi, elo;
 
     spl = splhigh();
 
-    // /* Replace invalid entries first */
-    // for(idx=0; idx<NUM_TLB; idx++) {
-    //     TLB_Read(&ehi, &elo, idx);
-	// 	if (elo & TLBLO_VALID) {
-	// 		continue;
-	// 	}
-    //     TLB_Write(entryhi, entrylo, idx);
-    //     splx(spl);
-    //     return idx;
-    // }
+    /* Replace invalid entries first */
+    for(idx=0; idx<NUM_TLB; idx++) {
+        TLB_Read(&ehi, &elo, idx);
+		if (elo & TLBLO_VALID) {
+			continue;
+		}
+        TLB_Write(entryhi, entrylo, idx);
+        splx(spl);
+        return idx;
+    }
 
     /* Evict randomly... */
     TLB_Random(entryhi, entrylo);
@@ -154,14 +162,16 @@ void TLB_Stat()
 
     int i;
     u_int32_t ehi, elo;
+    kprintf("\n");
     for(i=0; i<NUM_TLB; i++) {
         TLB_Read(&ehi, &elo, i);
-
-        int valid = TLB_ReadValid(i);
-        int dirty = TLB_ReadDirty(i);
-
-        kprintf("ENTRYNO: %02d  -----  EHI: 0x%08x  |  ELO: 0x%08x  |  VALID: %d  |  DIRTY: %d\n", i, ehi, elo, valid, dirty);
+        if(elo & TLBLO_VALID) {
+            int valid = TLB_ReadValid(i);
+            int dirty = TLB_ReadDirty(i);
+            kprintf("ENTRYNO: %02d  -----  EHI: 0x%08x  |  ELO: 0x%08x  |  VALID: %d  |  DIRTY: %d\n", i, ehi, elo, valid, dirty);
+        }
     }
+    kprintf("\n");
     splx(spl);
 }
 

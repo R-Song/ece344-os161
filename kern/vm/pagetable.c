@@ -9,7 +9,7 @@
 
 
 /*
- * NOTE: Copy on write needs to implemented soon!!
+ * NOTE: Copy on write needs to be implemented soon!!
  * Also when destroying a page table, we need to know which pages to deallocated!!!! something I missed entirely...
  */
 

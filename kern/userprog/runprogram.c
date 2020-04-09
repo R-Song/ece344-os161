@@ -14,6 +14,10 @@
 #include <vm.h>
 #include <vfs.h>
 #include <test.h>
+#include <vm_features_enable.h>
+
+/* Externally set load on demand flag */
+int LOAD_ON_DEMAND_ENABLE;
 
 /*
  * Load program "progname" and start running it in usermode.
@@ -47,8 +51,15 @@ runprogram(char *progname, char **argv, unsigned long size_args)
 	/* Activate it. */
 	as_activate(curthread->t_vmspace);
 
+
 	/* Load the executable. */
-	result = load_elf(v, &entrypoint);
+	if(LOAD_ON_DEMAND_ENABLE){
+		result = load_elf_od(v, &entrypoint);
+	}
+	else {
+		result = load_elf(v, &entrypoint);
+	}
+	
 	if (result) {
 		/* thread_exit destroys curthread->t_vmspace */
 		vfs_close(v);

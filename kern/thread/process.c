@@ -18,6 +18,8 @@
 #include <machine/spl.h>
 #include <elf.h>
 #include <vfs.h>
+#include <pagetable.h>
+#include <vm_features_enable.h>
 
 
 /********************************************************************************************/
@@ -33,6 +35,9 @@ struct thread **process_table;
 
 /* Redeclare zombies array used in thread.c */
 extern struct array *zombies;
+
+/* Externally set load on demand flag */
+int LOAD_ON_DEMAND_ENABLE;
 
 
 /* Initialize process table */
@@ -398,7 +403,12 @@ int proc_execv(char *program, int argc, char **argv){
     as_activate(curthread->t_vmspace);
 
     /* load the executable */
-    err = load_elf(v, &entrypoint);
+    if(LOAD_ON_DEMAND_ENABLE){
+        err = load_elf_od(v, &entrypoint);
+    }
+    else{
+        err = load_elf(v, &entrypoint);
+    }
     if(err) {
         vfs_close(v);
         as_destroy(curthread->t_vmspace);

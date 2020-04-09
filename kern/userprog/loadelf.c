@@ -19,6 +19,11 @@
 #include <vnode.h>
 #include <permissions.h>
 #include <machine/tlb.h>
+#include <pagetable.h>
+#include <vm_features_enable.h>
+
+/* Externally set load on demand flag */
+int LOAD_ON_DEMAND_ENABLE;
 
 /*
  * Load a segment at virtual address VADDR. The segment in memory
@@ -81,6 +86,51 @@ load_segment(struct vnode *v, off_t offset, vaddr_t vaddr,
 	}
 	
 	return result;
+}
+
+static 
+int 
+load_segment_od(struct vnode *v, off_t offset, vaddr_t vaddr, 
+	     				size_t memsize, size_t filesize,
+	    				int is_executable)
+{
+	struct uio u;
+
+	if (filesize > memsize) {
+		kprintf("ELF: warning: segment filesize > segment memsize\n");
+		filesize = memsize;
+	}
+
+	DEBUG(DB_EXEC, "ELF: Loading %lu bytes to 0x%lx\n", 
+	      (unsigned long) filesize, (unsigned long) vaddr);
+
+	u.uio_iovec.iov_ubase = (userptr_t)vaddr;
+	u.uio_iovec.iov_len = memsize;   // length of the memory space
+	u.uio_resid = filesize;          // amount to actually read
+	u.uio_offset = offset;
+	u.uio_segflg = is_executable ? UIO_USERISPACE : UIO_USERSPACE;
+	u.uio_rw = UIO_READ;
+	u.uio_space = curthread->t_vmspace;
+
+	/* Check whether we are working with as_code or as_data segment */
+	int is_code_seg = is_vaddrcode(curthread->t_vmspace, vaddr);
+	int is_data_seg = is_vaddrcode(curthread->t_vmspace, vaddr);
+	
+	/* the addrspace resides in the code region/segment */
+	if(is_code_seg){
+		curthread->t_vmspace->as_code->file = v;
+		curthread->t_vmspace->as_code->uio = u;
+	}
+	else if(is_data_seg){
+		curthread->t_vmspace->as_data->file = v;
+		curthread->t_vmspace->as_data->uio = u;
+	}
+	//else{
+		// can this happen???
+		// panic??? 
+	//}
+	return 0;			
+
 }
 
 /*
@@ -178,13 +228,14 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 		}
 
 		result = as_define_region(curthread->t_vmspace,
-					  ph.p_vaddr, ph.p_memsz,
-					  ph.p_flags & PF_R,
-					  ph.p_flags & PF_W,
-					  ph.p_flags & PF_X);
+					ph.p_vaddr, ph.p_memsz,
+					ph.p_flags & PF_R,
+					ph.p_flags & PF_W,
+					ph.p_flags & PF_X);
 		if (result) {
 			return result;
 		}
+	
 	}
 
 #if !OPT_DUMBVM
@@ -193,6 +244,7 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 #endif
 
 	/* This does all the page allocations at once! This will have to change when we load on demand... */
+
 	result = as_prepare_load(curthread->t_vmspace);
 	if (result) {
 		return result;
@@ -254,7 +306,224 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 }
 
 
+int load_elf_od(struct vnode *v, vaddr_t *entrypoint){
+	Elf_Ehdr eh;   /* Executable header */
+	Elf_Phdr ph;   /* "Program header" = segment header */
+	int result, i;
+	struct uio ku;
+
+	/*
+	 * Read the executable header from offset 0 in the file.
+	 */
+
+	mk_kuio(&ku, &eh, sizeof(eh), 0, UIO_READ);
+	result = VOP_READ(v, &ku);
+	if (result) {
+		return result;
+	}
+
+	if (ku.uio_resid != 0) {
+		/* short read; problem with executable? */
+		kprintf("ELF: short read on header - file truncated?\n");
+		return ENOEXEC;
+	}
+
+	/*
+	 * Check to make sure it's a 32-bit ELF-version-1 executable
+	 * for our processor type. If it's not, we can't run it.
+	 *
+	 * Ignore EI_OSABI and EI_ABIVERSION - properly, we should
+	 * define our own, but that would require tinkering with the
+	 * linker to have it emit our magic numbers instead of the
+	 * default ones. (If the linker even supports these fields,
+	 * which were not in the original elf spec.)
+	 */
+
+	if (eh.e_ident[EI_MAG0] != ELFMAG0 ||
+	    eh.e_ident[EI_MAG1] != ELFMAG1 ||
+	    eh.e_ident[EI_MAG2] != ELFMAG2 ||
+	    eh.e_ident[EI_MAG3] != ELFMAG3 ||
+	    eh.e_ident[EI_CLASS] != ELFCLASS32 ||
+	    eh.e_ident[EI_DATA] != ELFDATA2MSB ||
+	    eh.e_ident[EI_VERSION] != EV_CURRENT ||
+	    eh.e_version != EV_CURRENT ||
+	    eh.e_type!=ET_EXEC ||
+	    eh.e_machine!=EM_MACHINE) {
+		return ENOEXEC;
+	}
+
+	/*
+	 * Go through the list of segments and set up the address space.
+	 *
+	 * Ordinarily there will be one code segment, one read-only
+	 * data segment, and one data/bss segment, but there might
+	 * conceivably be more. You don't need to support such files
+	 * if it's unduly awkward to do so.
+	 *
+	 * Note that the expression eh.e_phoff + i*eh.e_phentsize is 
+	 * mandated by the ELF standard - we use sizeof(ph) to load,
+	 * because that's the structure we know, but the file on disk
+	 * might have a larger structure, so we must use e_phentsize
+	 * to find where the phdr starts.
+	 */
+
+	for (i=0; i<eh.e_phnum; i++) {
+		off_t offset = eh.e_phoff + i*eh.e_phentsize;
+		mk_kuio(&ku, &ph, sizeof(ph), offset, UIO_READ);
+
+		result = VOP_READ(v, &ku);
+		if (result) {
+			return result;
+		}
+
+		if (ku.uio_resid != 0) {
+			/* short read; problem with executable? */
+			kprintf("ELF: short read on phdr - file truncated?\n");
+			return ENOEXEC;
+		}
+
+		switch (ph.p_type) {
+		    case PT_NULL: /* skip */ continue;
+		    case PT_PHDR: /* skip */ continue;
+		    case PT_MIPS_REGINFO: /* skip */ continue;
+		    case PT_LOAD: break;
+		    default:
+			kprintf("loadelf: unknown segment type %d\n", 
+				ph.p_type);
+			return ENOEXEC;
+		}
+
+		result = as_define_region(curthread->t_vmspace,
+					ph.p_vaddr, ph.p_memsz,
+					ph.p_flags & PF_R,
+					ph.p_flags & PF_W,
+					ph.p_flags & PF_X);
+		if (result) {
+			return result;
+		}
+	
+	}
+
+#if !OPT_DUMBVM
+	/* Now we have to initialize the heap */
+	as_define_heap(curthread->t_vmspace);
+#endif
+
+	/* This does all the page allocations at once! This will have to change when we load on demand... */
+
+	result = as_prepare_load(curthread->t_vmspace);
+	if (result) {
+		return result;
+	}
+
+	/*
+	 * Now actually load each segment.
+	 */
+	/* Since we don't use as_region structs to store info about heap and stack */
+	/* I presume there are only 2 regions/segments - code and data */
+	for (i=0; i<eh.e_phnum; i++) {
+		off_t offset = eh.e_phoff + i*eh.e_phentsize;
+		mk_kuio(&ku, &ph, sizeof(ph), offset, UIO_READ);
+
+		result = VOP_READ(v, &ku);
+		if (result) {
+			return result;
+		}
+
+		if (ku.uio_resid != 0) {
+			/* short read; problem with executable? */
+			kprintf("ELF: short read on phdr - file truncated?\n");
+			return ENOEXEC;
+		}
+
+		switch (ph.p_type) {
+		    case PT_NULL: /* skip */ continue;
+		    case PT_PHDR: /* skip */ continue;
+		    case PT_MIPS_REGINFO: /* skip */ continue;
+		    case PT_LOAD: break;
+		    default:
+			kprintf("loadelf: unknown segment type %d\n", 
+				ph.p_type);
+			return ENOEXEC;
+		}
+
+		result = load_segment_od(v, ph.p_offset, ph.p_vaddr, 
+				      ph.p_memsz, ph.p_filesz,
+				      ph.p_flags & PF_X);
+		if (result) {
+			return result;
+		}
+	}
+
+	result = as_complete_load(curthread->t_vmspace);
+	if (result) {
+		return result;
+	}
+
+	*entrypoint = eh.e_entry;
+	//kprintf("Finished loading\n");
+
+#if !OPT_DUMBVM
+	//pt_dump(curthread->t_vmspace->as_pagetable);
+	//region_dump(curthread->t_vmspace);
+#endif
+	//TLB_Stat();
+	//region_dump(curthread->t_vmspace);
+
+	return 0;
+}
 
 
+int load_page_od(struct vnode *v, struct uio u, off_t p_offset)
+{
+	int result, fillamt;
+	size_t filesize, memsize, file_to_read, new_memsize;
 
+	u.uio_iovec.iov_ubase += p_offset;
+	u.uio_offset += p_offset;
 
+	new_memsize = u.uio_iovec.iov_len - p_offset;
+	if( new_memsize > PAGE_SIZE){
+		u.uio_iovec.iov_len = PAGE_SIZE;	
+	}
+	else {
+		u.uio_iovec.iov_len = new_memsize;
+	}
+
+	file_to_read = u.uio_resid;	
+	if( ((int)file_to_read - (int)p_offset) < 0){
+		u.uio_resid = 0;
+	}
+	else {
+		if((file_to_read - p_offset) > PAGE_SIZE){
+			u.uio_resid = PAGE_SIZE;	
+		}
+		else {
+			u.uio_resid = file_to_read - p_offset;	
+		}
+	}
+
+	result = VOP_READ(v, &u);
+	if (result) {
+		return result;
+	}
+
+	if (u.uio_resid != 0) {
+		/* short read; problem with executable? */
+		kprintf("ELF: short read on segment - file truncated?\n");
+		return ENOEXEC;
+	}
+
+	memsize = u.uio_iovec.iov_len;
+	filesize = u.uio_resid;
+	/* Fill the rest of the memory space (if any) with zeros */
+	fillamt = memsize - filesize;
+	if (fillamt > 0) {
+		DEBUG(DB_EXEC, "ELF: Zero-filling %lu more bytes\n", 
+		      (unsigned long) fillamt);
+		u.uio_resid += fillamt;
+		result = uiomovezeros(fillamt, &u);
+	}	
+
+	return 0;
+}

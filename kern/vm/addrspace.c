@@ -18,6 +18,17 @@
 #include <bitmap.h>
 #include <permissions.h>
 
+#include <vm_features_enable.h>
+#include <curthread.h>
+#include <vnode.h>
+#include <uio.h>
+#include <elf.h>
+#include <vfs.h>
+
+/* Externally set load on demand flag */
+int LOAD_ON_DEMAND_ENABLE;
+
+struct thread *curthread;
 
 /* current active address space id */
 static asid_t curaddrspace;
@@ -30,8 +41,6 @@ static struct bitmap *as_bitmap;
 
 /* synchronization primitive for the asid bitmap */
 static struct semaphore *as_bitmap_mutex = NULL;
-
-
 
 /* debug flag that enables tlb tags */
 static int DEBUG_ASID_ENABLE = 0;
@@ -88,6 +97,50 @@ as_create(void)
 		return NULL;
 	}
 
+	if(LOAD_ON_DEMAND_ENABLE){
+		as->as_code->file = (struct vnode *)kmalloc(sizeof(struct vnode));
+		if(as->as_code->file == NULL) {
+			kfree(as->as_code);
+			kfree(as->as_data);
+			pt_destroy(as->as_pagetable);
+			kfree(as);
+			return NULL;
+		}
+
+		// as->as_code->uio = (struct uio *)kmalloc(sizeof(struct uio));
+		// if(as->as_code->uio == NULL) {
+		// 	kfree(as->as_code->file);
+		// 	kfree(as->as_code);
+		// 	kfree(as->as_data);
+		// 	pt_destroy(as->as_pagetable);
+		// 	kfree(as);
+		// 	return NULL;
+		// }
+
+		as->as_data->file = (struct vnode *)kmalloc(sizeof(struct vnode));
+		if(as->as_data->file == NULL) {
+			//kfree(as->as_code->uio);
+			kfree(as->as_code->file);
+			kfree(as->as_code);
+			kfree(as->as_data);
+			pt_destroy(as->as_pagetable);
+			kfree(as);
+			return NULL;
+		}
+	// 	as->as_data->uio = (struct uio *)kmalloc(sizeof(struct uio));
+	// 	if(as->as_data->uio == NULL) {
+	// 		kfree(as->as_code->uio);
+	// 		kfree(as->as_code->file);
+	// 		kfree(as->as_code);
+	// 		kfree(as->as_data->file);
+	// 		kfree(as->as_data);
+	// 		pt_destroy(as->as_pagetable);
+	// 		kfree(as);
+	// 		return NULL;
+	// 	}
+	}
+
+
 	/* Attempt to get an available asid. If possible. */
 	if(DEBUG_ASID_ENABLE) {
 		P(as_bitmap_mutex);
@@ -142,7 +195,12 @@ as_destroy(struct addrspace *as)
 		}
 		V(as_bitmap_mutex);
 	}
-
+	if(LOAD_ON_DEMAND_ENABLE){
+		kfree(as->as_code->file);
+		kfree(as->as_data->file);
+		//kfree(as->as_code->uio);
+		//kfree(as->as_data->uio);
+	}
 	/* Destroy the regions, pagetable, and as */
 	kfree(as->as_code);
 	kfree(as->as_data);
@@ -253,8 +311,8 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		* Copy contents of all pages
 		* We do this by converting all physical pages to kernel addresses, then using memmove()
 		*/
-		memmove((void *)PADDR_TO_KVADDR(old_entry->ppageaddr), 
-				(const void *)PADDR_TO_KVADDR(new_entry->ppageaddr),
+		memmove((void *)PADDR_TO_KVADDR(new_entry->ppageaddr),
+				(const void *)PADDR_TO_KVADDR(old_entry->ppageaddr), 
 				PAGE_SIZE);
 			
 		assert(old_entry->ppageaddr != new_entry->ppageaddr);
@@ -281,45 +339,51 @@ as_copy(struct addrspace *old, struct addrspace **ret)
  */ 
 int
 as_prepare_load(struct addrspace *as)
-{	
-	/* Do a sanity check */
-	assert(as->as_code->npages != 0);
-	assert(as->as_code->vbase != 0);
-
-	int spl = splhigh();
-
-	/* 
-	 * We have to allocate memory for code and data segments
-	 * Do this by adding entries into the page table
-	 */
-	unsigned i;
-	struct pte *entry;
-	vaddr_t vpageaddr;
-
-	/* Code segment */
-	for(i=0; i<as->as_code->npages; i++) {	
-		vpageaddr = (as->as_code->vbase + (i*PAGE_SIZE));
-		entry = alloc_upage(as, vpageaddr);
-		if(entry == NULL) {
-			return ENOMEM;
-		}
-		entry->permissions = set_permissions(1, 1, 1); /* RWX */
-		//kprintf("Allocated space for code page #%u\n", i);
+{
+	if(LOAD_ON_DEMAND_ENABLE){
+		(void)as;
+		return 0;
 	}
+	else {
+		/* Do a sanity check */
+		assert(as->as_code->npages != 0);
+		assert(as->as_code->vbase != 0);
 
-	/* Data segment */
-	for(i=0; i<as->as_data->npages; i++) {
-		vpageaddr = (as->as_data->vbase + (i*PAGE_SIZE));
-		entry = alloc_upage(as, vpageaddr);
-		if(entry == NULL) {
-			return ENOMEM;
+		int spl = splhigh();
+
+		/* 
+		* We have to allocate memory for code and data segments
+		* Do this by adding entries into the page table
+		*/
+		unsigned i;
+		struct pte *entry;
+		vaddr_t vpageaddr;
+
+		/* Code segment */
+		for(i=0; i<as->as_code->npages; i++) {	
+			vpageaddr = (as->as_code->vbase + (i*PAGE_SIZE));
+			entry = alloc_upage(as, vpageaddr);
+			if(entry == NULL) {
+				return ENOMEM;
+			}
+			entry->permissions = set_permissions(1, 1, 1); /* RWX */
+			//kprintf("Allocated space for code page #%u\n", i);
 		}
-		entry->permissions = set_permissions(1, 1, 1); /* RWX */
-		//kprintf("Allocated space for data page #%u\n", i);
-	}
 
-	splx(spl);
-	return 0;
+		/* Data segment */
+		for(i=0; i<as->as_data->npages; i++) {
+			vpageaddr = (as->as_data->vbase + (i*PAGE_SIZE));
+			entry = alloc_upage(as, vpageaddr);
+			if(entry == NULL) {
+				return ENOMEM;
+			}
+			entry->permissions = set_permissions(1, 1, 1); /* RWX */
+			//kprintf("Allocated space for data page #%u\n", i);
+		}
+
+		splx(spl);
+		return 0;
+	}
 }
 
 
@@ -343,6 +407,12 @@ as_activate(struct addrspace *as)
 
 	/* This area is critical as we are handling tlb as well as writing to curaddrspace globals */
 	spl = splhigh();
+
+	/* Change the uio space to that of the new addrspace*/
+	//if(LOAD_ON_DEMAND_ENABLE){
+	//	as->as_code->uio->uio_space = curthread->t_vmspace;
+	//	as->as_data->uio->uio_space = curthread->t_vmspace;
+	//}
 
 	if(!DEBUG_ASID_ENABLE) {
 		TLB_Flush();
@@ -441,29 +511,35 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
  */
 int
 as_complete_load(struct addrspace *as)
-{
-	unsigned i;
-	struct pte *entry;
-	vaddr_t addr;
-
-	/* Code segment */
-	for(i=0; i<as->as_code->npages; i++) {
-		addr = (as->as_code->vbase + (i*PAGE_SIZE)); 
-		entry = pt_get(as->as_pagetable, addr);
-		entry->permissions = as->as_code->permissions;
+{	
+	if(LOAD_ON_DEMAND_ENABLE){
+		(void)as;
+		return 0;
 	}
+	else {
+		unsigned i;
+		struct pte *entry;
+		vaddr_t addr;
 
-	/* Data segment */
-	for(i=0; i<as->as_data->npages; i++) {
-		addr = (as->as_data->vbase + (i*PAGE_SIZE)); 
-		entry = pt_get(as->as_pagetable, addr);
-		entry->permissions = as->as_data->permissions;
+		/* Code segment */
+		for(i=0; i<as->as_code->npages; i++) {
+			addr = (as->as_code->vbase + (i*PAGE_SIZE)); 
+			entry = pt_get(as->as_pagetable, addr);
+			entry->permissions = as->as_code->permissions;
+		}
+
+		/* Data segment */
+		for(i=0; i<as->as_data->npages; i++) {
+			addr = (as->as_data->vbase + (i*PAGE_SIZE)); 
+			entry = pt_get(as->as_pagetable, addr);
+			entry->permissions = as->as_data->permissions;
+		}
+
+		/* Flush TLB as all TLB entries are dirty */
+		//TLB_Flush();
+
+		return 0;
 	}
-
-	/* Flush TLB as all TLB entries are dirty */
-	//TLB_Flush();
-
-	return 0;
 }
 
 /*

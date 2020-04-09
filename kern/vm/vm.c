@@ -9,6 +9,7 @@
  * used. The cheesy hack versions in dumbvm.c are used instead.
  */
 
+#include <vm_features_enable.h>
 #include <types.h>
 #include <machine/spl.h>
 #include <machine/tlb.h>
@@ -23,6 +24,8 @@
 #include <pagetable.h>
 #include <permissions.h>
 
+/* Externally set load on demand flag */
+int LOAD_ON_DEMAND_ENABLE;
 
 /*
  * vm_bootstrap()
@@ -31,6 +34,7 @@
 void
 vm_bootstrap(void)
 {
+	flag_bootstrap(0);    // new
 	coremap_bootstrap();
 	as_bitmap_bootstrap();
 }
@@ -191,7 +195,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 			break;
 
 		case VM_FAULT_WRITE:
-			retval = vm_writefault(as, faultentry, faultpage, is_pagefault, is_stack);
+			retval = vm_writefault(as, faultentry, faultaddress, is_pagefault, is_stack);
 			break;
 
 		case VM_FAULT_READONLY:
@@ -241,10 +245,14 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage
 
 
 /* Handles faults on writes */
-int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpage, int is_pagefault, int is_stack)
+int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int is_pagefault, int is_stack)
 {
 	assert(curspl>0);
 	int idx;
+	int result;
+
+	vaddr_t faultpage = (faultaddress & PAGE_FRAME);
+	off_t p_offset;
 
 	/* Check to see if page fault is to the stack. If so we should allocate a page for the stack. */
 	if(is_pagefault && is_stack) {
@@ -262,6 +270,28 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultpag
 		idx = TLB_Replace(faultpage, new_stack_entry->ppageaddr);
 		TLB_WriteDirty(idx, 1);
 		TLB_WriteValid(idx, 1);
+
+		if(LOAD_ON_DEMAND_ENABLE){
+			/* Check whether we are working with as_code or as_data segment */
+			int is_code_seg = is_vaddrcode(as, faultpage);
+			int is_data_seg = is_vaddrcode(as, faultpage);
+
+			if(is_code_seg){
+				p_offset = faultaddress - as->as_code->vbase;
+				result = load_page_od(as->as_code->file, as->as_code->uio, p_offset);
+				if(result){
+					return result;
+				}	
+			}
+			else if(is_data_seg){
+				p_offset = faultaddress - as->as_data->vbase;
+				result = load_page_od(as->as_data->file, as->as_data->uio, p_offset);
+				if(result){
+					return result;
+				}				
+			}
+			
+		}
 		return 0;
 	}
 

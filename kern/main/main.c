@@ -19,6 +19,7 @@
 
 #include <clock.h>
 #include <coremap.h>
+#include <vm_features_enable.h>
 
 /*
  * These two pieces of data are maintained by the makefiles and build system.
@@ -86,6 +87,7 @@ boot(void)
 	 * New ordering, note that we bootstrap vm right after RAM 
 	 * Having the coremap is essential to kmalloc(), which other structures depend on
 	 */
+	
 	ram_bootstrap();
 	vm_bootstrap();
 	scheduler_bootstrap();

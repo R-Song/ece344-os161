@@ -10,9 +10,13 @@
 #include <vm.h>
 #include <pagetable.h>
 #include <permissions.h>
+#include <uio.h>
+#include <elf.h>
+#include <curthread.h>
 
 
 struct vnode;
+struct uio;
 
 /*
  * Definition of as_region
@@ -27,6 +31,8 @@ struct as_region {
 	size_t npages;
 	permissions_t permissions;
 	/* Will need a lot more information for ondemand paging */
+	struct vnode *file;
+	struct uio uio;
 };
 /* define the region */
 void region_dump(struct addrspace *as) ;
@@ -144,6 +150,6 @@ int is_vaddrstack(struct addrspace *as, vaddr_t vaddr);
 
 int load_elf(struct vnode *v, vaddr_t *entrypoint);
 int load_elf_od(struct vnode *v, vaddr_t *entrypoint);
-
+int load_page_od(struct vnode *v, struct uio u, off_t p_offset);
 
 #endif /* _ADDRSPACE_H_ */

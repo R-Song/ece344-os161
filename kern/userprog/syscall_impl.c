@@ -33,6 +33,8 @@
 int
 sys_write(int fd, const void *buf, size_t nbytes, int *retval)
 {	
+	int spl = splhigh();
+
 	/* 
 	 * Allocate kernel memory and attempt to copy user buffer to kernel buffer
 	 * Note, the buffer may not be null terminated, therefore we need to append a null character
@@ -43,6 +45,7 @@ sys_write(int fd, const void *buf, size_t nbytes, int *retval)
 	{
 		*retval = -1;
 		kfree(kbuf);
+		splx(spl);
 		return EFAULT;
 	}
 	kbuf[nbytes] = '\0'; // pad with NULL character
@@ -53,6 +56,7 @@ sys_write(int fd, const void *buf, size_t nbytes, int *retval)
 		case STDOUT_FILENO:
 			*retval = kprintf("%s", kbuf);
 			kfree(kbuf);
+			splx(spl);
 			return 0;
 		break;
 
@@ -60,6 +64,7 @@ sys_write(int fd, const void *buf, size_t nbytes, int *retval)
 			/* How to distinguish stdout from stderr??? */
 			*retval = kprintf("%s", kbuf);
 			kfree(kbuf);
+			splx(spl);
 			return 0;
 		break;
 		
@@ -67,11 +72,13 @@ sys_write(int fd, const void *buf, size_t nbytes, int *retval)
 			/* Neither stdout or stderr, cannot handle this */
 			*retval = -1;
 			kfree(kbuf);
+			splx(spl);
 			return EBADF;
 		break;
 	}
 
 	/* Should not reach here */
+	panic("Should not reacher here - sys_write");
 	return 0;
 }
 

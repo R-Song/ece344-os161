@@ -151,6 +151,11 @@ mips_syscall(struct trapframe *tf)
 	tf->tf_epc += 4;
 
 	/* Make sure the syscall code didn't forget to lower spl */
+	// if(curspl != 0) {
+	// 	kprintf("\n\n%d is the culprit\n\n", callno);
+	// 	curspl = 0;
+	// }
+
 	assert(curspl==0);
 }
 
@@ -179,7 +184,7 @@ md_forkentry(void *tf, unsigned long child_addrspace)
 	/* Change the address space and activate the address space */
     curthread->t_vmspace = child_as;
     as_activate(curthread->t_vmspace);
-	
+
 	/* Enter user mode */
 	mips_usermode(&child_tf);
 

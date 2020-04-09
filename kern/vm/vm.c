@@ -149,7 +149,6 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	int spl = splhigh();
 
 	//kprintf("faultaddress at 0x%08x\n", faultaddress);
-	//TLB_Stat();
 
 	int is_pagefault;
 	int is_stack;

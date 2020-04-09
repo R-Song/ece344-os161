@@ -240,6 +240,7 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
     if(err) {
         as_destroy(child_addrspace);
         kfree(child_tf);
+        splx(spl);
         return err;
     }  
     child_thread->t_waitflag = 1;
@@ -428,6 +429,8 @@ int proc_execv(char *program, int argc, char **argv){
         err = copyout((const void *)argv[idx], (userptr_t)(stackptr), (size_t)len);        /* copy out the string to the stack */
         if( err ){
             kfree(user_argv);
+            as_destroy(curthread->t_vmspace);
+            curthread->t_vmspace = cur_addrspace;
             goto execv_failed;
         } 
         user_argv[idx] = (char *)stackptr;   /* update to point towards the string */

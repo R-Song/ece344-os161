@@ -253,14 +253,12 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		* Copy contents of all pages
 		* We do this by converting all physical pages to kernel addresses, then using memmove()
 		*/
-		memmove((void *)PADDR_TO_KVADDR(old_entry->ppageaddr), 
-				(const void *)PADDR_TO_KVADDR(new_entry->ppageaddr),
+		memmove((void *)PADDR_TO_KVADDR(new_entry->ppageaddr), 
+				(const void *)PADDR_TO_KVADDR(old_entry->ppageaddr),
 				PAGE_SIZE);
 			
 		assert(old_entry->ppageaddr != new_entry->ppageaddr);
 	}
-
-	// pt_dump(new->as_pagetable);
 
 	*ret = new;
 	splx(spl);
@@ -301,6 +299,7 @@ as_prepare_load(struct addrspace *as)
 		vpageaddr = (as->as_code->vbase + (i*PAGE_SIZE));
 		entry = alloc_upage(as, vpageaddr);
 		if(entry == NULL) {
+			splx(spl);
 			return ENOMEM;
 		}
 		entry->permissions = set_permissions(1, 1, 1); /* RWX */
@@ -312,6 +311,7 @@ as_prepare_load(struct addrspace *as)
 		vpageaddr = (as->as_data->vbase + (i*PAGE_SIZE));
 		entry = alloc_upage(as, vpageaddr);
 		if(entry == NULL) {
+			splx(spl);
 			return ENOMEM;
 		}
 		entry->permissions = set_permissions(1, 1, 1); /* RWX */
@@ -558,6 +558,24 @@ void region_dump(struct addrspace *as)
 		}
 		kprintf("\n");
 	}
+
+	kprintf("Printing Data Segment \n\n");
+	for(i=0; i<as->as_data->npages; i++) {
+		kprintf("Page %d:\n", i);
+		/* Get the physical page */
+		entry = pt_get(as->as_pagetable, (as->as_data->vbase+i*PAGE_SIZE) );
+		assert(entry != NULL);
+
+		/* Convert address to kernel virtual address and cast it to a pointer */
+		vaddr = (u_int32_t *)PADDR_TO_KVADDR(entry->ppageaddr);
+
+		/* 4096/32 = 128 */
+		for(j=0; j<(PAGE_SIZE/sizeof(u_int32_t)); j++) {
+			kprintf("%x", vaddr[j]);
+		}
+		kprintf("\n");
+	}
+
 	splx(spl);
 
 #else
@@ -574,6 +592,20 @@ void region_dump(struct addrspace *as)
 		
 		/* Convert address to kernel virtual address and cast it to a pointer */
 		vaddr = (u_int32_t *)PADDR_TO_KVADDR(as->pbase1 + i*PAGE_SIZE);
+
+		/* 4096/32 = 128 */
+		for(j=0; j<(PAGE_SIZE/sizeof(u_int32_t)); j++) {
+			kprintf("%x", vaddr[j]);
+		}
+		kprintf("\n");
+	}
+
+	kprintf("Printing Data Segment \n\n");
+	for(i=0; i<as->as_npages2; i++) {
+		kprintf("Page %d:\n", i);
+		
+		/* Convert address to kernel virtual address and cast it to a pointer */
+		vaddr = (u_int32_t *)PADDR_TO_KVADDR(as->pbase2 + i*PAGE_SIZE);
 
 		/* 4096/32 = 128 */
 		for(j=0; j<(PAGE_SIZE/sizeof(u_int32_t)); j++) {

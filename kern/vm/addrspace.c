@@ -99,16 +99,6 @@ as_create(void)
 			return NULL;
 		}
 
-		// as->as_code->uio = (struct uio *)kmalloc(sizeof(struct uio));
-		// if(as->as_code->uio == NULL) {
-		// 	kfree(as->as_code->file);
-		// 	kfree(as->as_code);
-		// 	kfree(as->as_data);
-		// 	pt_destroy(as->as_pagetable);
-		// 	kfree(as);
-		// 	return NULL;
-		// }
-
 		as->as_data->file = (struct vnode *)kmalloc(sizeof(struct vnode));
 		if(as->as_data->file == NULL) {
 			//kfree(as->as_code->uio);
@@ -119,17 +109,6 @@ as_create(void)
 			kfree(as);
 			return NULL;
 		}
-		// as->as_data->uio = (struct uio *)kmalloc(sizeof(struct uio));
-		// if(as->as_data->uio == NULL) {
-		// 	kfree(as->as_code->uio);
-		// 	kfree(as->as_code->file);
-		// 	kfree(as->as_code);
-		// 	kfree(as->as_data->file);
-		// 	kfree(as->as_data);
-		// 	pt_destroy(as->as_pagetable);
-		// 	kfree(as);
-		// 	return NULL;
-		// }
 	}
 
 
@@ -189,8 +168,6 @@ as_destroy(struct addrspace *as)
 	if(LOAD_ON_DEMAND_ENABLE){
 		kfree(as->as_code->file);
 		kfree(as->as_data->file);
-		//kfree(as->as_code->uio);
-		//kfree(as->as_data->uio);
 	}
 	/* Destroy the regions, pagetable, and as */
 	kfree(as->as_code);
@@ -398,10 +375,10 @@ as_activate(struct addrspace *as)
 	spl = splhigh();
 
 	/* Change the uio space to that of the new addrspace*/
-	if(LOAD_ON_DEMAND_ENABLE){
-		(as->as_code->uio).uio_space = curthread->t_vmspace;
-		(as->as_data->uio).uio_space = curthread->t_vmspace;
-	}
+	//if(LOAD_ON_DEMAND_ENABLE){
+	//	(as->as_code->uio).uio_space = curthread->t_vmspace;
+	//	(as->as_data->uio).uio_space = curthread->t_vmspace;
+	//}
 
 	if(!TLB_ASID_ENABLE) {
 		TLB_Flush();

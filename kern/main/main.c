@@ -16,10 +16,8 @@
 #include <vm.h>
 #include <syscall.h>
 #include <version.h>
-
 #include <clock.h>
 #include <coremap.h>
-#include <vm_features_enable.h>
 
 /*
  * These two pieces of data are maintained by the makefiles and build system.

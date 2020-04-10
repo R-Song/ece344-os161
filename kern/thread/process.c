@@ -19,7 +19,7 @@
 #include <elf.h>
 #include <vfs.h>
 #include <pagetable.h>
-#include <vm_features_enable.h>
+#include <vm_features.h>
 
 
 /********************************************************************************************/
@@ -35,9 +35,6 @@ struct thread **process_table;
 
 /* Redeclare zombies array used in thread.c */
 extern struct array *zombies;
-
-/* Externally set load on demand flag */
-int LOAD_ON_DEMAND_ENABLE;
 
 
 /* Initialize process table */

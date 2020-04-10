@@ -14,10 +14,8 @@
 #include <vm.h>
 #include <vfs.h>
 #include <test.h>
-#include <vm_features_enable.h>
+#include <vm_features.h>
 
-/* Externally set load on demand flag */
-int LOAD_ON_DEMAND_ENABLE;
 
 /*
  * Load program "progname" and start running it in usermode.

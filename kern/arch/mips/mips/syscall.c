@@ -151,11 +151,6 @@ mips_syscall(struct trapframe *tf)
 	tf->tf_epc += 4;
 
 	/* Make sure the syscall code didn't forget to lower spl */
-	// if(curspl != 0) {
-	// 	kprintf("\n\n%d is the culprit\n\n", callno);
-	// 	curspl = 0;
-	// }
-
 	assert(curspl==0);
 }
 

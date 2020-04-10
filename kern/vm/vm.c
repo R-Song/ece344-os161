@@ -9,7 +9,6 @@
  * used. The cheesy hack versions in dumbvm.c are used instead.
  */
 
-#include <vm_features_enable.h>
 #include <types.h>
 #include <machine/spl.h>
 #include <machine/tlb.h>
@@ -23,9 +22,8 @@
 #include <syscall.h>
 #include <pagetable.h>
 #include <permissions.h>
+#include <vm_features.h>
 
-/* Externally set load on demand flag */
-int LOAD_ON_DEMAND_ENABLE;
 
 /*
  * vm_bootstrap()
@@ -34,7 +32,6 @@ int LOAD_ON_DEMAND_ENABLE;
 void
 vm_bootstrap(void)
 {
-	flag_bootstrap(0);    // new
 	coremap_bootstrap();
 	as_bitmap_bootstrap();
 }

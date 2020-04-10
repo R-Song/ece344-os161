@@ -20,10 +20,8 @@
 #include <permissions.h>
 #include <machine/tlb.h>
 #include <pagetable.h>
-#include <vm_features_enable.h>
+#include <vm_features.h>
 
-/* Externally set load on demand flag */
-int LOAD_ON_DEMAND_ENABLE;
 
 /*
  * Load a segment at virtual address VADDR. The segment in memory

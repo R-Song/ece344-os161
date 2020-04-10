@@ -17,18 +17,14 @@
 #include <pagetable.h>
 #include <bitmap.h>
 #include <permissions.h>
-
-#include <vm_features_enable.h>
+#include <vm_features.h>
 #include <curthread.h>
+#include <thread.h>
 #include <vnode.h>
 #include <uio.h>
 #include <elf.h>
 #include <vfs.h>
 
-/* Externally set load on demand flag */
-int LOAD_ON_DEMAND_ENABLE;
-
-struct thread *curthread;
 
 /* current active address space id */
 static asid_t curaddrspace;
@@ -41,10 +37,6 @@ static struct bitmap *as_bitmap;
 
 /* synchronization primitive for the asid bitmap */
 static struct semaphore *as_bitmap_mutex = NULL;
-
-/* debug flag that enables tlb tags */
-static int DEBUG_ASID_ENABLE = 0;
-
 
 
 /* 
@@ -127,22 +119,22 @@ as_create(void)
 			kfree(as);
 			return NULL;
 		}
-	// 	as->as_data->uio = (struct uio *)kmalloc(sizeof(struct uio));
-	// 	if(as->as_data->uio == NULL) {
-	// 		kfree(as->as_code->uio);
-	// 		kfree(as->as_code->file);
-	// 		kfree(as->as_code);
-	// 		kfree(as->as_data->file);
-	// 		kfree(as->as_data);
-	// 		pt_destroy(as->as_pagetable);
-	// 		kfree(as);
-	// 		return NULL;
-	// 	}
+		// as->as_data->uio = (struct uio *)kmalloc(sizeof(struct uio));
+		// if(as->as_data->uio == NULL) {
+		// 	kfree(as->as_code->uio);
+		// 	kfree(as->as_code->file);
+		// 	kfree(as->as_code);
+		// 	kfree(as->as_data->file);
+		// 	kfree(as->as_data);
+		// 	pt_destroy(as->as_pagetable);
+		// 	kfree(as);
+		// 	return NULL;
+		// }
 	}
 
 
 	/* Attempt to get an available asid. If possible. */
-	if(DEBUG_ASID_ENABLE) {
+	if(TLB_ASID_ENABLE) {
 		P(as_bitmap_mutex);
 		err = bitmap_alloc(as_bitmap, &index);
 		if(err){
@@ -159,7 +151,6 @@ as_create(void)
 		as->as_asid = NUM_ASID; /* Set to invalid asid just in case */
 		as->as_asid_set = 0;	
 	}
-
 
 	/* Initialize everything */
 	as->as_code->vbase = 0;
@@ -188,7 +179,7 @@ as_destroy(struct addrspace *as)
 	assert(as != NULL);
 
 	/* Give up the addrspace id */
-	if(DEBUG_ASID_ENABLE) {
+	if(TLB_ASID_ENABLE) {
 		P(as_bitmap_mutex);
 		if(as->as_asid_set) {
 			bitmap_unmark(as_bitmap, as->as_asid);
@@ -407,12 +398,12 @@ as_activate(struct addrspace *as)
 	spl = splhigh();
 
 	/* Change the uio space to that of the new addrspace*/
-	//if(LOAD_ON_DEMAND_ENABLE){
-	//	as->as_code->uio->uio_space = curthread->t_vmspace;
-	//	as->as_data->uio->uio_space = curthread->t_vmspace;
-	//}
+	if(LOAD_ON_DEMAND_ENABLE){
+		(as->as_code->uio).uio_space = curthread->t_vmspace;
+		(as->as_data->uio).uio_space = curthread->t_vmspace;
+	}
 
-	if(!DEBUG_ASID_ENABLE) {
+	if(!TLB_ASID_ENABLE) {
 		TLB_Flush();
 	}
 	else {

@@ -11,21 +11,11 @@
 /* coremap structure, an array allocated at runtime */
 static struct coremap_entry *coremap = NULL;
 
-/* synchronization primitive for the coremap */
-static struct semaphore *coremap_mutex = NULL;
-
 /* first available page. All pages up to and including the coremap are fixed, and should not be deallocated... */
 static int first_avail_ppage = 0;
 
 /* one after the last available page */
 static int last_avail_ppage = 0;
-
-/* flag to indicate whether or not to use mutex, for debugging */
-static int DEBUG_USE_MUTEX = 0; 
-/* 
- * Currently mutex doesn't work, but I want to eventually use a synchronization primitive rather than interrupts... 
- * Using the semaphore causes a hang in booting... not sure where the deadlock is coming from
- */
 
 
 /*
@@ -51,7 +41,7 @@ void coremap_bootstrap()
     int num_ppages = (lastpaddr >> PAGE_OFFSET);
 
     /* Number of pages dedicated to fitting the coremap and its mutex */
-    int num_coremap_pages = ( (num_ppages*sizeof(struct coremap_entry) + sizeof(struct semaphore) + PAGE_SIZE-1) >> PAGE_OFFSET) ;
+    int num_coremap_pages = ( (num_ppages*sizeof(struct coremap_entry) + PAGE_SIZE-1) >> PAGE_OFFSET) ;
 
     /* Initialize address of coremap */
     coremap = (struct coremap_entry *)PADDR_TO_KVADDR(firstpaddr);
@@ -73,10 +63,6 @@ void coremap_bootstrap()
         coremap[i].state = S_FREE; /* This memory is fixed */
         coremap[i].num_pages_allocated = 1;
     }
-
-    /* Initialize coremap_mutex */
-    coremap_mutex = (struct semaphore *)PADDR_TO_KVADDR(firstpaddr + num_ppages*sizeof(struct coremap_entry));
-	coremap_mutex->count = 1;
 
     /* save first and last pages */
     first_avail_ppage = num_fixed_pages;
@@ -105,11 +91,7 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
     int spl;
     
     /* get access to coremap using semapore or just disable interrupts */
-    if(!DEBUG_USE_MUTEX) 
-        spl = splhigh();
-    else {
-        P(coremap_mutex);
-    }
+    spl = splhigh();
 
     /* loop through available pages and find consevutively free pages */
     for(page_it=first_avail_ppage; page_it<last_avail_ppage; page_it++){
@@ -156,19 +138,13 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
             }
         }
 
-        if(!DEBUG_USE_MUTEX) 
-            splx(spl);
-        else {
-            V(coremap_mutex);
-        }
+        splx(spl);
+
         return (start_page*PAGE_SIZE);
     }
 
-    if(!DEBUG_USE_MUTEX) 
-        splx(spl);
-    else {
-        V(coremap_mutex);
-    }
+    splx(spl);
+
     return 0;
 }
 
@@ -184,11 +160,8 @@ void free_ppages(paddr_t paddr)
     int spl;
 
     /* get access to coremap using semapore or just disable interrupts */
-    if(!DEBUG_USE_MUTEX) 
-        spl = splhigh();
-    else {
-        P(coremap_mutex);
-    }
+    spl = splhigh();
+
 
     /* Get the start and end pages to free */
     int start_page = (paddr >> PAGE_OFFSET);
@@ -209,11 +182,7 @@ void free_ppages(paddr_t paddr)
         coremap[i].num_pages_allocated = 0;
     }
     
-    if(!DEBUG_USE_MUTEX) 
-        splx(spl);
-    else {
-        V(coremap_mutex);
-    }
+    splx(spl);
 }
 
 

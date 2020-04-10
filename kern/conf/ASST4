@@ -33,3 +33,4 @@ options sfs			# Always use the file system
 
 #options dumbvm			# Use your own VM system now.
 #options synchprobs		# No longer needed/wanted after assignment 2
+#options twolevelpagetable # Use this until more efficient pagetable is implemented

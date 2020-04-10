@@ -4,12 +4,14 @@
 /*
 * Global enable flags for features added in vm functions
 */
-extern int LOAD_ON_DEMAND_ENABLE;
+#define LOAD_ON_DEMAND_ENABLE 0
 
-extern int SWAPPING_ENABLE;
+#define MEMORY_EFFICIENT_PAGE_TABLE 0
 
-extern int TLB_ASID_ENABLE;
+#define SWAPPING_ENABLE 0
 
-extern int COPY_ON_WRITE_ENABLE;
+#define TLB_ASID_ENABLE 0
+
+#define COPY_ON_WRITE_ENABLE 0
 
 #endif /* _VM_FEATURES_H_ */

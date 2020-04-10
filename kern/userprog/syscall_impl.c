@@ -224,7 +224,6 @@ int sys_fork(struct trapframe *tf, pid_t *ret_val)
 		*ret_val = -1;
 		return err;
 	}
-
 	*ret_val = child_pid;
 	return 0;
 }
@@ -358,6 +357,8 @@ const int MAX_ARGLEN = 64;		// maximum number of characters in an argument
 const int MAX_ARGNUM = 32;		// maximum number of arguments
 
 int sys_execv(const char *user_program, char **args, pid_t *retval){
+	int spl = splhigh();
+
 	int err = 0; 		/* Error code, if exists */
 	int argc = 0;		/* Number of arguments, gotta count the length of args */
 	char **argv;		/* dynamically allocate the array once we have a grasp at what argc is */
@@ -434,6 +435,7 @@ int sys_execv(const char *user_program, char **args, pid_t *retval){
 
 execv_failed:
 	*retval = -1;
+	splx(spl);
 	return err;
 }
 

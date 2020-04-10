@@ -264,6 +264,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	 * Allocate a new physical page for every virtual page in the page table
 	 * This will be deprecated later when we do copy on write!
 	 */
+	vaddr = 0;
 	while(1) {
 		/* Should never be a page with vaddr_t 0 */
 		vaddr = pt_getnext(new->as_pagetable, vaddr);

@@ -373,6 +373,8 @@ void proc_exit(int exitcode)
  *      7. Call md_usermode to get into usermode. Should not return from there
  */ 
 int proc_execv(char *program, int argc, char **argv){
+    int spl = splhigh();
+
     struct vnode *v;
     vaddr_t entrypoint, stackptr;
     struct addrspace *cur_addrspace;
@@ -466,6 +468,7 @@ int proc_execv(char *program, int argc, char **argv){
     as_destroy(cur_addrspace);      /* destroy old addrspace */
 
 	/* Warp to user mode. */
+    splx(spl);
 	md_usermode((int) argc, (userptr_t)stackptr, stackptr, entrypoint);
 	
 	/* md_usermode does not return */
@@ -479,6 +482,7 @@ execv_failed:
     }
     kfree(argv);
     kfree(program);
+    splx(spl);
     return err;
 }
 

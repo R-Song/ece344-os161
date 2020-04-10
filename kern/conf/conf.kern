@@ -391,12 +391,13 @@ file      userprog/syscall_impl.c
 # (you will probably want to add stuff here while doing the VM assignment)
 #
 
+defoption twolevelpagetable
+
 optofffile dumbvm   vm/vm.c
 optofffile dumbvm   vm/coremap.c
 optofffile dumbvm   vm/pagetable.c
 optofffile dumbvm   vm/addrspace.c
 file                vm/permissions.c
-file                vm/vm_features.c
 
 #
 # Network

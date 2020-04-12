@@ -143,7 +143,11 @@ pt_add_done:
 /* get pte entry */
 struct pte *pt_get(pagetable_t pt, vaddr_t vaddr)
 {
-    assert(pt != NULL && pt->pte_array != NULL);
+    //assert(pt != NULL && pt->pte_array != NULL);
+    assert(pt != NULL);
+    if( pt->pte_array == NULL ){
+        return NULL;
+    }
 
     u_int32_t first_idx = PT_VADDR_TO_FIRST_INDEX(vaddr);
     u_int32_t second_idx = PT_VADDR_TO_SECOND_INDEX(vaddr);

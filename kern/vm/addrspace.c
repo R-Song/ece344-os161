@@ -101,7 +101,6 @@ as_create(void)
 
 		as->as_data->file = (struct vnode *)kmalloc(sizeof(struct vnode));
 		if(as->as_data->file == NULL) {
-			//kfree(as->as_code->uio);
 			kfree(as->as_code->file);
 			kfree(as->as_code);
 			kfree(as->as_data);
@@ -376,10 +375,10 @@ as_activate(struct addrspace *as)
 	spl = splhigh();
 
 	/* Change the uio space to that of the new addrspace*/
-	//if(LOAD_ON_DEMAND_ENABLE){
-	//	(as->as_code->uio).uio_space = curthread->t_vmspace;
-	//	(as->as_data->uio).uio_space = curthread->t_vmspace;
-	//}
+	if(LOAD_ON_DEMAND_ENABLE){
+		(as->as_code->uio).uio_space = curthread->t_vmspace;
+		(as->as_data->uio).uio_space = curthread->t_vmspace;
+	}
 
 	if(!TLB_ASID_ENABLE) {
 		TLB_Flush();

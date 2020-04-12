@@ -18,12 +18,15 @@
 #include <curthread.h>
 #include <addrspace.h>
 #include <vm.h>
+#include <synch.h>
 #include <coremap.h>
 #include <syscall.h>
 #include <pagetable.h>
 #include <permissions.h>
 #include <vm_features.h>
 
+
+struct lock *vm_fault_lock;
 
 /*
  * vm_bootstrap()
@@ -34,6 +37,7 @@ vm_bootstrap(void)
 {
 	coremap_bootstrap();
 	as_bitmap_bootstrap();
+	vm_fault_lock = lock_create("vm_fault_lock");
 }
 
 
@@ -205,8 +209,8 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	return retval;
 }
 
-/* Need to check whether the page is already in memory or not 
- * If it IS, load appropriate entry into TLB and return from exception
+/* Need to check whether the page is already in memory or not (is_pagefault ?) 
+ * If it IS, load appropriate entry into TLB and return from exception 
  * If it is NOT:
  * 		 - allocate a place in physical memory to store the page - use alloc_upage
  * 		 - load the page, using info from the program's ELF file to do so - call load_page_od
@@ -218,6 +222,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 /* Handles faults on reads */
 int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int is_pagefault, int is_stack)
 {
+	lock_acquire(vm_fault_lock);
 	assert(curspl>0);
 
 	if(!LOAD_ON_DEMAND_ENABLE){
@@ -239,6 +244,7 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 			 * is that the vaddr is in the heap or somewhere else on the stack
 			 */
 			if(!is_code_seg && !is_data_seg){
+				lock_release(vm_fault_lock);
 				return EFAULT;
 			}
 
@@ -246,14 +252,21 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 			/* Allocate space for it in physical memory to store it */
 			entry = alloc_upage(as, faultpage);
 			if(entry == NULL) {
+				lock_release(vm_fault_lock);
 				return ENOMEM;
 			}
 			entry->permissions = set_permissions(1, 1, 1); /* RWX */
+
+			/* Add to the TLB */
+			idx = TLB_Replace(faultpage, entry->ppageaddr);
+			TLB_WriteDirty(idx, 1);
+			TLB_WriteValid(idx, 1);	
 
 			if(is_code_seg){
 				p_offset = faultaddress - as->as_code->vbase;
 				result = load_page_od(as->as_code->file, as->as_code->uio, p_offset);
 				if(result){
+					lock_release(vm_fault_lock);
 					return result;
 				}	
 			}
@@ -261,18 +274,17 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 				p_offset = faultaddress - as->as_data->vbase;
 				result = load_page_od(as->as_data->file, as->as_data->uio, p_offset);
 				if(result){
+					lock_release(vm_fault_lock);
 					return result;
 				}			
 			}
-			/* Add to the TLB */
-		    idx = TLB_Replace(faultpage, entry->ppageaddr);
-			TLB_WriteDirty(idx, 1);
-			TLB_WriteValid(idx, 1);	
-			//TLB_Stat();
+
+			lock_release(vm_fault_lock);
 			return 0;	
 		}
 		else {
 			//kprintf("Bad read at page 0x%x\n", faultpage);
+			lock_release(vm_fault_lock);
 			return EFAULT;
 		}
 
@@ -287,13 +299,16 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 			TLB_WriteDirty(idx, 1);
 			TLB_WriteValid(idx, 1);
 			//TLB_Stat();
+			lock_release(vm_fault_lock);
 			return 0;
 		}
 		else {
 			//kprintf("No permission to read at page 0x%x\n", faultpage);
+			lock_release(vm_fault_lock);
 			return EFAULT;
 		}
 	}
+	lock_release(vm_fault_lock);
 	panic("Should not reach here, vm_readfault");
 	return 0;
 }
@@ -302,6 +317,7 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 /* Handles faults on writes */
 int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int is_pagefault, int is_stack)
 {
+	lock_acquire(vm_fault_lock);
 	assert(curspl>0);
 	int idx;
 	int result;
@@ -314,6 +330,7 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 		struct pte *new_stack_entry = alloc_upage(as, faultpage);
 		if(new_stack_entry == NULL) {
 			//kprintf("Out of memory while creating stack");
+			lock_release(vm_fault_lock);
 			return ENOMEM;
 		}
 		
@@ -326,6 +343,7 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 		TLB_WriteDirty(idx, 1);
 		TLB_WriteValid(idx, 1);
 		//TLB_Stat();
+		lock_release(vm_fault_lock);
 		return 0;
 	}
 
@@ -339,20 +357,28 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 			 * is that the vaddr is in the heap or somewhere else on the stack
 			 */
 			if(!is_code_seg && !is_data_seg){
+				lock_release(vm_fault_lock);
 				return EFAULT;
 			}
 			struct pte *entry;
 			/* Allocate space for it in physical memory to store it */
 			entry = alloc_upage(as, faultpage);
 			if(entry == NULL) {
+				lock_release(vm_fault_lock);
 				return ENOMEM;
 			}
 			entry->permissions = set_permissions(1, 1, 1); /* RWX */
+
+			/* Add to the TLB */
+			idx = TLB_Replace(faultpage, entry->ppageaddr);
+			TLB_WriteDirty(idx, 1);
+			TLB_WriteValid(idx, 1);
 
 			if(is_code_seg){
 				p_offset = faultaddress - as->as_code->vbase;
 				result = load_page_od(as->as_code->file, as->as_code->uio, p_offset);
 				if(result){
+					lock_release(vm_fault_lock);
 					return result;
 				}	
 			}
@@ -360,19 +386,18 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 				p_offset = faultaddress - as->as_data->vbase;
 				result = load_page_od(as->as_data->file, as->as_data->uio, p_offset);
 				if(result){
+					lock_release(vm_fault_lock);
 					return result;
 				}			
 			}
-			/* Add to the TLB */
-		    idx = TLB_Replace(faultpage, entry->ppageaddr);
-			TLB_WriteDirty(idx, 1);
-			TLB_WriteValid(idx, 1);	
-			//TLB_Stat();
+
+			lock_release(vm_fault_lock);
 			return 0;	
 		}
 		else {
 			/* Illegal write to unallocated memory to the stack. Segfault. */
 		    //kprintf("Bad write to page 0x%x\n", faultpage);
+			lock_release(vm_fault_lock);
 		    return EFAULT;
 		}
 	}
@@ -383,14 +408,16 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 			idx = TLB_Replace(faultpage, faultentry->ppageaddr);
 			TLB_WriteDirty(idx, 1);
 			TLB_WriteValid(idx, 1);
+			lock_release(vm_fault_lock);
 			return 0;
 		}
 		else {
 			//kprintf("No permission to write to page 0x%x\n", faultpage);
+			lock_release(vm_fault_lock);
 			return EFAULT;
 		}
 	}
-
+	lock_release(vm_fault_lock);
 	panic("Should not reach here, vm_writefault");
 	return 0;
 }

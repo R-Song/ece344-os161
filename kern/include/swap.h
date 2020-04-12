@@ -8,7 +8,7 @@
  *     3) Interface to swap pages in and out of the coremap, keeping pagetables and coremap updated
  *     4) Method to make pages available for the kernel on large allocations
  * 
- * A few notes:
+ * layers of abstraction:
  *     When a page is written to the disk from the coremap, it become clean. Although we could just always
  *     skip this by writing to the disk when we need to evict, this is not the most efficient. This seperation
  *     of writing to disk, and evicting lets us to later on create a thread that periodically writes pages to 
@@ -16,10 +16,60 @@
  *     So swapping is actual writing to the disk. Evicting is the process of clearing the TLB and updating 
  *     the page tables.
  * 
+ * synchronization:
+ *     Why do we turn off interrupts and also use locks at the same time? The answer is as follows. When 
+ *     we do I/O with the swap disk, we actually need to acquire the lock for the swap file. This means that
+ *     there is a possibility out prog could be put to sleep on the lock... which defeats the reason why
+ *     we set interrupts off to begin with. This is why we should protect vm_fault and swap operations 
+ *     with locks as well as interrupts.
+ * 
+ * when do we evict?
+ *     This is a question of optimization. When moving a page from the swap file to the physical memory,
+ *     it actually might be good to keep the page in swap disk so that we don't need to write back in the future.
+ * 
  */
 
+struct pte;
 
+/* 
+ * Initialize swap disk and all its pertaining fields
+ * This is called in main after vfs_bootstrap and dev_bootstrap 
+ */
+void swap_bootstrap();
 
+/* Given a swapfile location, read the swap page into physical page */
+int swap_read(u_int32_t swap_location, paddr_t ppage);
 
+/* Given a swapfile locations, write the physical page into the swap location */
+int swap_write(u_int32_t swap_location, paddr_t ppage);
+
+/* 
+ * Given a page table entry, write a copy of the page to disk. 
+ * In the process, update the page table entry, swap_bitmap, 
+ * as well as the coremap
+ */
+int swap_pageout(struct pte *entry);
+
+/*
+ * Given a page table entry, read the contents of the page on 
+ * the swap disk into entry->ppageaddr
+ */
+int swap_pagein(struct pte *entry);
+
+/*
+ * Given a page table entry, evict the page from the coremap
+ */
+void swap_pageevict(struct pte *entry);
+
+/*
+ * Use swapping to free up npages of memory
+ * Return the first physical page. Return 0 if no available chain of pages was found
+ */
+int swap_createspace(int npages);
+
+/*
+ * Use to free a page from the swap disk
+ */
+void swap_freepage(u_int32_t swap_location);
 
 #endif /* _SWAP_H_ */

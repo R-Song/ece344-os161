@@ -232,9 +232,12 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		}
 		assert(vaddr < USERTOP); /* Should not ever go over user virtual address space */
 
-		/* Allocate a physical page for this pte */
+		/* Initialize all the pages */
 		struct pte *entry = pt_get(new->as_pagetable, vaddr);
 		entry->ppageaddr = 0;
+		entry->is_present = 0;
+		entry->is_swapped = 0;
+		entry->swap_location = 0;
 	}
 
 	/* 
@@ -256,13 +259,13 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		assert(new_entry->ppageaddr == 0);
 
 		/* Allocate a page */
-		new_entry->ppageaddr = get_ppages(1, 0, 0); /* ask for 1 non-fixed user-page */
+		alloc_upage(new_entry);		/* ask for 1 user-page */
+
 		if(new_entry->ppageaddr == 0) {
 			as_destroy(new);
 			splx(spl);
 			return ENOMEM;
 		}
-
 		/* Update permissions */
 		if( is_vaddrcode(new, vaddr) )
 			new_entry->permissions = new->as_code->permissions;
@@ -275,6 +278,9 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		else {
 			panic("Unknown region. Memory is not managed properly.");
 		}
+		new_entry->is_present = 1;
+		new_entry->is_swapped = 0;
+		new_entry->swap_location = 0;
 
 		/*
 		* Copy contents of all pages
@@ -328,24 +334,54 @@ as_prepare_load(struct addrspace *as)
 
 		/* Code segment */
 		for(i=0; i<as->as_code->npages; i++) {	
-			vpageaddr = (as->as_code->vbase + (i*PAGE_SIZE));
-			entry = alloc_upage(as, vpageaddr);
+			entry = pte_init();
 			if(entry == NULL) {
+				splx(spl);
 				return ENOMEM;
 			}
+			vpageaddr = (as->as_code->vbase + (i*PAGE_SIZE));
+
+			alloc_upage(entry);
+			if(entry->ppageaddr == 0) {
+				pte_destroy(entry);
+				splx(spl);
+				return ENOMEM;
+			}
+
+			/* entry->ppageaddr is updated by alloc_upage */
 			entry->permissions = set_permissions(1, 1, 1); /* RWX */
-			//kprintf("Allocated space for code page #%u\n", i);
+			entry->is_present = 1;
+			entry->is_swapped = 0;
+			entry->swap_location = 0;
+
+			/* add entry to page table */
+			pt_add(as->as_pagetable, vpageaddr, entry);
 		}
 
 		/* Data segment */
 		for(i=0; i<as->as_data->npages; i++) {
-			vpageaddr = (as->as_data->vbase + (i*PAGE_SIZE));
-			entry = alloc_upage(as, vpageaddr);
+			entry = pte_init();
 			if(entry == NULL) {
+				splx(spl);
 				return ENOMEM;
 			}
+			vpageaddr = (as->as_data->vbase + (i*PAGE_SIZE));
+
+			alloc_upage(entry);
+			if(entry->ppageaddr == 0) {
+				pte_destroy(entry);
+				splx(spl);
+				return ENOMEM;
+			}
+
+			/* entry->ppageaddr is updated by alloc_upage */
 			entry->permissions = set_permissions(1, 1, 1); /* RWX */
-			//kprintf("Allocated space for data page #%u\n", i);
+			entry->is_present = 1;
+			entry->is_swapped = 0;
+			entry->swap_location = 0;
+
+			/* add entry to page table */
+			pt_add(as->as_pagetable, vpageaddr, entry);
 		}
 
 		splx(spl);

@@ -238,7 +238,7 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
     spl = splhigh();
 
     struct thread *child_thread;
-    err = thread_fork("dont care", (void *)child_tf, (unsigned long)child_addrspace, md_forkentry, &child_thread);
+    err = thread_fork("Child of fork", (void *)child_tf, (unsigned long)child_addrspace, md_forkentry, &child_thread);
     if(err) {
         as_destroy(child_addrspace);
         kfree(child_tf);

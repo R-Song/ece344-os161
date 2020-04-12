@@ -504,11 +504,23 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 			/* Allocate the pages requested by the user */
 			for(i=0; i<num_pages_requested; i++) {
 				vaddr = ((old_heapend + i*PAGE_SIZE + PAGE_SIZE-1) & PAGE_FRAME);
-				new_entry = alloc_upage(as, vaddr);
+
+				new_entry = pte_init();
 				if(new_entry == NULL) {
 					goto sbrk_failed;
 				}
+
+				alloc_upage(new_entry);
+				if(new_entry->ppageaddr == 0) {
+					pte_destroy(new_entry);
+					goto sbrk_failed;
+				}
+
+				pt_add(as->as_pagetable, vaddr, new_entry);
 				new_entry->permissions = set_permissions(1, 1, 0);
+				new_entry->is_present = 1;
+				new_entry->is_swapped = 0;
+				new_entry->swap_location = 0;
 			}
 			/* Update heap breakpoint */
 			as->as_heapend += amount;
@@ -524,7 +536,9 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 				if(new_entry == NULL) {
 					continue;
 				}
-				free_upage(as, vaddr);
+				free_upage(new_entry);
+				pt_remove(as->as_pagetable, vaddr);
+				pte_destroy(new_entry);
 			}
 			*retval = -1;
 			splx(spl);
@@ -547,7 +561,10 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 			size_t num_pages_dealloc = old_heapsize - new_heapsize;
 			for(i=0; i<num_pages_dealloc; i++) {
 				vaddr = ((old_heapend - i*PAGE_SIZE) & PAGE_FRAME);
-				free_upage(as, vaddr);
+				new_entry = pt_get(as->as_pagetable, vaddr);
+				free_upage(new_entry);
+				pt_remove(as->as_pagetable, vaddr);
+				pte_destroy(new_entry);
 			}
 			as->as_heapend += amount;
 			splx(spl);

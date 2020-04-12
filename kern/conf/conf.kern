@@ -398,6 +398,7 @@ optofffile dumbvm   vm/coremap.c
 optofffile dumbvm   vm/pagetable.c
 optofffile dumbvm   vm/addrspace.c
 file                vm/permissions.c
+file                vm/swap.c
 
 #
 # Network

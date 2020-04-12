@@ -7,6 +7,8 @@
 #include <vm.h>
 #include <machine/spl.h>
 #include <coremap.h>
+#include <pagetable.h>
+#include <swap.h>
 
 /* coremap structure, an array allocated at runtime */
 static struct coremap_entry *coremap = NULL;
@@ -50,18 +52,16 @@ void coremap_bootstrap()
     int num_fixed_pages = ((firstpaddr >> PAGE_OFFSET) + num_coremap_pages);
 
     for(i=0; i<num_fixed_pages; i++) {
-        coremap[i].owner = NULL;
-        coremap[i].vpage_num = (PADDR_TO_KVADDR(i*PAGE_SIZE) >> PAGE_OFFSET); /* Kernel VP mapping */
         coremap[i].state = S_FIXED; /* This memory is fixed */
         coremap[i].num_pages_allocated = 1;
+        coremap[i].pt_entry = NULL;
     }
 
     /* Initialize the rest of the coremap */
     for(i=num_fixed_pages; i<num_ppages; i++) {
-        coremap[i].owner = NULL;
-        coremap[i].vpage_num = 0;    /* Kernel VP mapping */
-        coremap[i].state = S_FREE; /* This memory is fixed */
+        coremap[i].state = S_FREE; /* This memory is free */
         coremap[i].num_pages_allocated = 1;
+        coremap[i].pt_entry = NULL;
     }
 
     /* save first and last pages */
@@ -79,10 +79,9 @@ void coremap_bootstrap()
  * We are looking for consecutive physical pages. If found, we update the coremap accordingly and 
  * return the physical address of the first page allocated.
  * 
- * is_fixed=1 means we want this page allocation to be fixed in memory, never swapped.
  * is_kernel=1 means we are allocating a kernel page, meaning its virtual page number is directly mapped.
  */
-paddr_t get_ppages(int npages, int is_fixed, int is_kernel) 
+paddr_t get_ppages(int npages, int is_kernel, struct pte *entry) 
 {   
     /* local variables */
     int page_it = 0;
@@ -115,20 +114,13 @@ paddr_t get_ppages(int npages, int is_fixed, int is_kernel)
         int end_page = start_page + npages;
 
         for(i=start_page; i<end_page; i++) {
-            coremap[i].owner = curthread;
-
-            if(is_fixed) 
+            if(is_kernel) {
                 coremap[i].state = S_FIXED;
+                coremap[i].pt_entry = NULL;
+            }
             else {
                 coremap[i].state = S_DIRTY;
-            }
-
-            coremap[i].is_kernel = is_kernel;
-
-            if(is_kernel)
-                coremap[i].vpage_num = (PADDR_TO_KVADDR(i*PAGE_SIZE) >> PAGE_OFFSET);
-            else {
-                coremap[i].vpage_num = 0; /* When do we do the virtual address mapping??? Maybe later? */
+                coremap[i].pt_entry = entry;
             }
 
             if(i==start_page)
@@ -167,7 +159,7 @@ void free_ppages(paddr_t paddr)
     int start_page = (paddr >> PAGE_OFFSET);
     int end_page = start_page + coremap[start_page].num_pages_allocated;
     if(start_page == end_page) {
-        panic("Fatal Coremap: Probably double freeing...");
+        panic("Fatal Coremap: Probably double freeing...\n");
     }
     assert(start_page>=first_avail_ppage && end_page<last_avail_ppage);
 
@@ -175,11 +167,9 @@ void free_ppages(paddr_t paddr)
     int i;
     for(i=start_page; i<end_page; i++) {
         assert(coremap[i].state != S_FREE);
-        coremap[i].owner = NULL;
         coremap[i].state = S_FREE;
-        coremap[i].is_kernel = 0;
-        coremap[i].vpage_num = 0;
         coremap[i].num_pages_allocated = 0;
+        coremap[i].pt_entry = NULL;
     }
     
     splx(spl);
@@ -190,7 +180,8 @@ void free_ppages(paddr_t paddr)
  * coremap_stat()
  * Print relevant information about the coremap for debugging
  */
-void coremap_stat() {
+void coremap_stat() 
+{
     int spl = splhigh();
     int i;
     int j = 0;
@@ -218,4 +209,75 @@ void coremap_stat() {
 
     splx(spl);
 }
+
+
+/*
+ * coremap_swaphelper()
+ * helps swap find contiguous non-fixed, then swaps them out into memory.
+ * if contiguous memory cannot to be found, it means we have too many kernel pages....
+ */
+int coremap_swaphelper(int npages) 
+{
+    assert(curspl>0);
+    int err;
+    int page_it = 0;
+    int cnt = 0;
+    int space_avail = 0;
+
+    /* loop through available pages and find consecutively non-fixed pages */
+    for(page_it=first_avail_ppage; page_it<last_avail_ppage; page_it++){
+        /* check if space is available */
+        if(cnt == npages) {
+            space_avail = 1;
+            break;
+        } 
+        /* look through coremap for consecutive free pages */   
+        if(coremap[page_it].state != S_FIXED)
+            cnt++;
+        else {
+            cnt = 0;
+        }
+    }
+
+    if(space_avail) {
+        /* Space was found, swap it out of the coremap to free it up*/
+        int i;
+        int start_page = page_it - npages;
+        int end_page = start_page + npages;
+
+        for(i=start_page; i<end_page; i++) {
+            if(coremap[i].state == S_FREE) {
+                continue;
+            }
+
+            assert(coremap[i].num_pages_allocated == 1); /* All pages that make it here should be user pages. */
+
+            /* swap out the page */
+            struct pte *entry;
+            entry = coremap[i].pt_entry;
+            //kprintf("COREMAP:\n%d\n", entry->is_swapped);
+            err = swap_pageout(entry);
+            if(err) {
+                kprintf("failed to swap page out in coremap_swaphelper");
+                return 0;
+            }
+            entry->is_present = 0;
+            entry->ppageaddr = 0;
+
+            /* free this coremap entry */
+            coremap[i].state = S_FREE;
+            coremap[i].pt_entry = NULL;
+            coremap[i].num_pages_allocated = 0;
+        }
+        return 1;
+    }
+
+    return 0;
+}
+
+
+
+
+
+
 

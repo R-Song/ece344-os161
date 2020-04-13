@@ -8,6 +8,8 @@
 #include <kern/errno.h>
 #include <machine/vm.h>
 #include <machine/spl.h>
+#include <vm.h>
+#include <swap.h>
 
 
 /**************************************************
@@ -23,9 +25,7 @@ struct pte *pte_init()
     }
     entry->ppageaddr = 0;
     entry->permissions = set_permissions(0,0,0);
-    entry->is_present = 0;
-    entry->is_swapped = 0;
-    //entry->is_clean = 0;
+    entry->swap_state = PTE_NONE;
     entry->swap_location = 0;
     return entry;
 }
@@ -35,9 +35,7 @@ void pte_copy(struct pte *src, struct pte *dest)
 {
     dest->ppageaddr = src->ppageaddr;
     dest->permissions = src->permissions;
-    dest->is_present = src->is_present;
-    dest->is_swapped = src->is_swapped;
-    //dest->is_clean = src->is_clean;
+    dest->swap_state = src->swap_state;
     dest->swap_location = src->swap_location;
 }
 
@@ -331,6 +329,7 @@ void pt_destroy(pagetable_t pt)
     struct pte_container *it;
     struct pte_container *head;
     unsigned i;
+    assert( lock_do_i_hold(swap_lock) );
     
     head = pt;
 
@@ -346,7 +345,7 @@ void pt_destroy(pagetable_t pt)
                 for(i=0; i<PT_PTE_ARRAY_NUM_ENTRIES; i++) {
                     if(it->next->pte_array[i] != NULL) {
                         if(it->next->pte_array[i]->ppageaddr != 0) {
-                            free_ppages(it->next->pte_array[i]->ppageaddr);
+                            free_upage(it->next->pte_array[i]);
                         }
                         pte_destroy(it->next->pte_array[i]);
                     }
@@ -365,7 +364,7 @@ void pt_destroy(pagetable_t pt)
                 for(i=0; i<PT_PTE_ARRAY_NUM_ENTRIES; i++) {
                     if(head->pte_array[i] != NULL) {
                         if(head->pte_array[i]->ppageaddr != 0) {
-                            free_ppages(head->pte_array[i]->ppageaddr);
+                            free_upage(head->pte_array[i]);
                         }
                         pte_destroy(head->pte_array[i]);
                     }

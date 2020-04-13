@@ -23,6 +23,8 @@
 #include <coremap.h>
 #include <vm.h>
 #include <machine/spl.h>
+#include <swap.h>
+#include <synch.h>
 
 /*
  * System call for write.
@@ -463,6 +465,7 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 	size_t i;
 	struct pte *new_entry;
 	vaddr_t vaddr;
+	int err;
 
 	/* Retrieve current address space */
 	struct addrspace *as = curthread->t_vmspace;
@@ -471,7 +474,7 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 	vaddr_t old_heapend = as->as_heapend;
 	size_t old_heapsize = ((old_heapend - heapstart + PAGE_SIZE-1) >> PAGE_OFFSET); /* size of heap in pages */
 
-	/* Ensure that amount is not too negative. The operations looks weird because we are working with unsigned ints */
+	/* Ensure that amount is not too negative. The operations looks weird because we are working with unsigned values */
 	if( (amount < 0) && (old_heapend - heapstart < (unsigned)amount*-1) ){
 		splx(spl);
 		*retval = -1;
@@ -503,24 +506,27 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 			size_t num_pages_requested = new_heapsize - old_heapsize;
 			/* Allocate the pages requested by the user */
 			for(i=0; i<num_pages_requested; i++) {
+				lock_acquire(swap_lock);
+
 				vaddr = ((old_heapend + i*PAGE_SIZE + PAGE_SIZE-1) & PAGE_FRAME);
 
 				new_entry = pte_init();
 				if(new_entry == NULL) {
+					lock_release(swap_lock);
 					goto sbrk_failed;
 				}
 
-				alloc_upage(new_entry);
-				if(new_entry->ppageaddr == 0) {
+				err = swap_allocpage_od(new_entry);
+				if(err) {
 					pte_destroy(new_entry);
+					lock_release(swap_lock);
 					goto sbrk_failed;
 				}
+				new_entry->permissions = set_permissions(1, 1, 0);
 
 				pt_add(as->as_pagetable, vaddr, new_entry);
-				new_entry->permissions = set_permissions(1, 1, 0);
-				new_entry->is_present = 1;
-				new_entry->is_swapped = 0;
-				new_entry->swap_location = 0;
+				
+				lock_release(swap_lock);
 			}
 			/* Update heap breakpoint */
 			as->as_heapend += amount;
@@ -531,14 +537,20 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 		sbrk_failed:
 			/* Allocate failed along the way. Free all allocated pages */
 			for(i=0; i < num_pages_requested; i++){
+				lock_acquire(swap_lock);	
+
 				vaddr = ((old_heapend + i*PAGE_SIZE + PAGE_SIZE-1) & PAGE_FRAME);
 				new_entry = pt_get(as->as_pagetable, vaddr);
 				if(new_entry == NULL) {
+					lock_release(swap_lock);
 					continue;
 				}
+
 				free_upage(new_entry);
 				pt_remove(as->as_pagetable, vaddr);
 				pte_destroy(new_entry);
+
+				lock_release(swap_lock);
 			}
 			*retval = -1;
 			splx(spl);
@@ -559,13 +571,20 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 		else
 		{
 			size_t num_pages_dealloc = old_heapsize - new_heapsize;
+
 			for(i=0; i<num_pages_dealloc; i++) {
+				lock_acquire(swap_lock);
+
 				vaddr = ((old_heapend - i*PAGE_SIZE) & PAGE_FRAME);
 				new_entry = pt_get(as->as_pagetable, vaddr);
+
 				free_upage(new_entry);
 				pt_remove(as->as_pagetable, vaddr);
 				pte_destroy(new_entry);
+
+				lock_release(swap_lock);
 			}
+
 			as->as_heapend += amount;
 			splx(spl);
 			*retval = old_heapend;

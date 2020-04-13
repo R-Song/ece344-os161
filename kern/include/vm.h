@@ -26,6 +26,8 @@ int vm_fault(int faulttype, vaddr_t faultaddress);
 
 int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int is_pagefault, int is_stack, int is_swapped);
 int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int is_pagefault, int is_stack, int is_swapped);
+int vm_stackfault(struct addrspace *as, vaddr_t faultaddress);
+int vm_swapfault(struct pte *faultentry, vaddr_t faultaddress, int faulttype);
 
 /* Allocate/free kernel heap pages (called by kmalloc/kfree) */
 vaddr_t alloc_kpages(int npages);

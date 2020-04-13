@@ -11,7 +11,7 @@
 #include <swap.h>
 
 /* coremap structure, an array allocated at runtime */
-static struct coremap_entry *coremap = NULL;
+struct coremap_entry *coremap;
 
 /* first available page. All pages up to and including the coremap are fixed, and should not be deallocated... */
 static int first_avail_ppage = 0;
@@ -19,6 +19,8 @@ static int first_avail_ppage = 0;
 /* one after the last available page */
 static int last_avail_ppage = 0;
 
+/* for page replacement */
+static int prev_swap_page = 0;
 
 /*
  * coremap_bootstrap()
@@ -52,7 +54,7 @@ void coremap_bootstrap()
     int num_fixed_pages = ((firstpaddr >> PAGE_OFFSET) + num_coremap_pages);
 
     for(i=0; i<num_fixed_pages; i++) {
-        coremap[i].state = S_FIXED; /* This memory is fixed */
+        coremap[i].state = S_KERN; /* This memory is fixed */
         coremap[i].num_pages_allocated = 1;
         coremap[i].pt_entry = NULL;
     }
@@ -115,11 +117,11 @@ paddr_t get_ppages(int npages, int is_kernel, struct pte *entry)
 
         for(i=start_page; i<end_page; i++) {
             if(is_kernel) {
-                coremap[i].state = S_FIXED;
+                coremap[i].state = S_KERN;
                 coremap[i].pt_entry = NULL;
             }
             else {
-                coremap[i].state = S_DIRTY;
+                coremap[i].state = S_USER;
                 coremap[i].pt_entry = entry;
             }
 
@@ -157,6 +159,8 @@ void free_ppages(paddr_t paddr)
 
     /* Get the start and end pages to free */
     int start_page = (paddr >> PAGE_OFFSET);
+    assert(start_page < last_avail_ppage);
+    
     int end_page = start_page + coremap[start_page].num_pages_allocated;
     if(start_page == end_page) {
         panic("Fatal Coremap: Probably double freeing...\n");
@@ -191,13 +195,11 @@ void coremap_stat()
         kprintf("P%d: ", i);
         if(coremap[i].state == S_FREE)
             kprintf("FREE    ");
-        else if(coremap[i].state == S_DIRTY)
-            kprintf("DIRTY   ");
-        else if(coremap[i].state == S_FIXED)
-            kprintf("FIXED   ");
-        else if(coremap[i].state == S_CLEAN)
-            kprintf("CLEAN   ");
-
+        else if(coremap[i].state == S_USER)
+            kprintf("USER    ");
+        else if(coremap[i].state == S_KERN)
+            kprintf("KERN    ");
+            
         j++;
 
         if(j>7) {
@@ -211,14 +213,47 @@ void coremap_stat()
 }
 
 
+
+/****************************************************************************************
+ ****** Functions to help with Swapping *************************************************
+ ****************************************************************************************/
+
 /*
- * coremap_swaphelper()
- * helps swap find contiguous non-fixed, then swaps them out into memory.
- * if contiguous memory cannot to be found, it means we have too many kernel pages....
+ * coremap_swap_pageout()
+ * Finds a good page for swap_pageout to evict. Returns the page table entry.
  */
-int coremap_swaphelper(int npages) 
+struct pte *coremap_swap_pageout() {
+    assert(curspl>0);
+    int page_it;
+
+    /* loop through and find a user page to replace */
+    for(page_it=prev_swap_page+1; page_it<last_avail_ppage; page_it++){
+        if(coremap[page_it].state == S_USER) {
+            assert(coremap[page_it].pt_entry != NULL);
+            prev_swap_page = page_it;
+            return coremap[page_it].pt_entry;
+        }
+    }
+
+    for(page_it=first_avail_ppage; page_it<prev_swap_page+1; page_it++){
+        if(coremap[page_it].state == S_USER && page_it != prev_swap_page) {
+            assert(coremap[page_it].pt_entry != NULL);
+            prev_swap_page = page_it;
+            return coremap[page_it].pt_entry;
+        }
+    }
+    return NULL;
+}
+
+/*
+ * coremap_swap_createspace()
+ * More involved that coremap_swap_pageout(). This function clears npages using swapping.
+ * This function should only be used to create space for kernel pages.
+ */
+int coremap_swap_createspace(int npages) 
 {
     assert(curspl>0);
+
     int err;
     int page_it = 0;
     int cnt = 0;
@@ -232,7 +267,7 @@ int coremap_swaphelper(int npages)
             break;
         } 
         /* look through coremap for consecutive free pages */   
-        if(coremap[page_it].state != S_FIXED)
+        if(coremap[page_it].state != S_KERN)
             cnt++;
         else {
             cnt = 0;
@@ -244,40 +279,68 @@ int coremap_swaphelper(int npages)
         int i;
         int start_page = page_it - npages;
         int end_page = start_page + npages;
+        u_int32_t swap_location;
 
         for(i=start_page; i<end_page; i++) {
             if(coremap[i].state == S_FREE) {
                 continue;
             }
 
-            assert(coremap[i].num_pages_allocated == 1); /* All pages that make it here should be user pages. */
+            assert(coremap[i].num_pages_allocated == 1);
+            assert(coremap[i].state == S_USER);
 
             /* swap out the page */
-            struct pte *entry;
-            entry = coremap[i].pt_entry;
-            //kprintf("COREMAP:\n%d\n", entry->is_swapped);
-            err = swap_pageout(entry);
-            if(err) {
-                kprintf("failed to swap page out in coremap_swaphelper");
-                return 0;
-            }
-            entry->is_present = 0;
-            entry->ppageaddr = 0;
+            struct pte *entry_to_swap = coremap[i].pt_entry;
+            assert(entry_to_swap != NULL);
+            assert(entry_to_swap->swap_state != PTE_SWAPPED);
+            assert(entry_to_swap->ppageaddr != 0);
 
-            /* free this coremap entry */
-            coremap[i].state = S_FREE;
-            coremap[i].pt_entry = NULL;
-            coremap[i].num_pages_allocated = 0;
+            switch(entry_to_swap->swap_state) {
+                case PTE_PRESENT:
+                    /* we have to allocate a place in swap memory and evict */
+                    err = swap_allocpage(&swap_location);
+                    if(err) {
+                        return err;
+                    }
+
+                    /* write to this location */
+                    err = swap_write(swap_location, entry_to_swap->ppageaddr);
+                    if(err) {
+                        swap_freepage(swap_location);
+                        return err;
+                    }
+                    
+                    entry_to_swap->swap_location = swap_location;
+                    entry_to_swap->swap_state = PTE_CLEAN;
+                    swap_pageevict(entry_to_swap);
+                    break;
+
+                case PTE_DIRTY:
+                    /* Dirty means that it already has a page in swap disk */
+                    swap_location = entry_to_swap->swap_location;
+
+                    err = swap_write(swap_location, entry_to_swap->ppageaddr);
+                    if(err) {
+                        return err;
+                    }
+
+                    entry_to_swap->swap_location = swap_location;
+                    entry_to_swap->swap_state = PTE_CLEAN;
+                    swap_pageevict(entry_to_swap);
+                    break;
+                
+                case PTE_CLEAN:
+                    swap_pageevict(entry_to_swap);
+                    break;
+
+                default:
+                    panic("Invalid PTE state");
+            }
+
         }
-        return 1;
+        return 0;
     }
 
-    return 0;
+    return 1;
 }
-
-
-
-
-
-
 

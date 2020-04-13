@@ -56,6 +56,7 @@ alloc_kpages(int npages)
 {	
 	int spl = splhigh();
 	paddr_t paddr;
+	int err;
 
 	/* mark that we want the pages to be fixed and will be kernel pages */
 	paddr = get_ppages(npages, 1, NULL);
@@ -65,21 +66,30 @@ alloc_kpages(int npages)
 	}
 	
 if(SWAPPING_ENABLE) {
-	/* No more space, lets try swapping */
-	if( swap_createspace(npages) ) {
-		/* try again */
-		paddr = get_ppages(npages, 1, NULL);
-		if(paddr == 0) {
-			panic("Something seriously wrong with swap");
+	int lock_held_prior = lock_do_i_hold(swap_lock);
+	lock_acquire(swap_lock);
+
+	err = swap_createspace(npages);
+	if(err) {
+		if(!lock_held_prior) {
+			lock_release(swap_lock);
 		}
 		splx(spl);
-		return PADDR_TO_KVADDR(paddr);
+		return 0;
 	}
-	
+	/* try again */
+	paddr = get_ppages(npages, 1, NULL);
+	if(paddr == 0) {
+		panic("Something seriously wrong with swap");
+	}
+	if(!lock_held_prior) {
+		lock_release(swap_lock);
+	}
 	splx(spl);
-	return 0;
+	return PADDR_TO_KVADDR(paddr);
 }
 
+	splx(spl);
 	return 0;
 }
 
@@ -105,54 +115,67 @@ free_kpages(vaddr_t addr)
 void
 alloc_upage(struct pte *entry)
 {
+	int err;
 	int spl = splhigh();
 
 	assert(entry != NULL);
 	assert(entry->ppageaddr == 0);
-	assert(entry->is_present == 0);
+	assert( lock_do_i_hold(swap_lock) );
 
 	/* Get physical page from coremap */
 	entry->ppageaddr = get_ppages(1, 0, entry);
+	if(entry->ppageaddr != 0) {
+		splx(spl);
+		return;
+	}
 
 if(SWAPPING_ENABLE) {
+	err = swap_pageout();
+	if(err) {
+		splx(spl);
+		return;
+	}
+	entry->ppageaddr = get_ppages(1, 0, entry);
 	if(entry->ppageaddr == 0) {
-		/* lets try swapping */
-		if( swap_createspace(1) ) {
-			entry->ppageaddr = get_ppages(1, 0, entry);
-			if(entry->ppageaddr == 0) {
-				panic("Something seriously wrong with swap");
-			}
-			splx(spl);
-			return;
-		}
+		panic("Something messed up with swap");
 	}
 }
-	/* could not get a page */
 	splx(spl);
 }
 
 /*
  * free_upages()
- * Free user pages. 
+ * Free user pages depending on its swap state 
  */
 void
 free_upage(struct pte *entry)
 {
 	int spl = splhigh();
+	assert(lock_do_i_hold(swap_lock));
 
-	assert(entry != NULL);
-	assert(entry->is_swapped == 1 || entry->ppageaddr != 0);
-
-	if(!entry->is_swapped && entry->is_present) {
-		/* its in coremap but not swap */
-		assert(entry->ppageaddr != 0);
-		free_ppages(entry->ppageaddr);
-	}
-	else if(entry->is_swapped && !entry->is_present) {
-		swap_freepage(entry->swap_location);
-	}
-	else {
-		panic("Haven't implemented this yet");
+	/* Depending on the swap state, we free differently */
+	switch(entry->swap_state) {
+		case PTE_PRESENT:
+			assert(entry->ppageaddr != 0);
+			free_ppages(entry->ppageaddr);
+			entry->ppageaddr = 0;
+			entry->swap_state = PTE_NONE;
+			break;
+		case PTE_SWAPPED:
+			swap_freepage(entry->swap_location);
+			entry->ppageaddr = 0;
+			entry->swap_state = PTE_NONE;
+			break;
+		case PTE_DIRTY:
+		case PTE_CLEAN:
+			assert(entry->ppageaddr != 0);
+			free_ppages(entry->ppageaddr);
+			swap_freepage(entry->swap_location);
+			entry->ppageaddr = 0;
+			entry->swap_state = PTE_NONE;
+			break;
+		default:
+			panic("invalid swap state!!\n");
 	}
 
 	splx(spl);
@@ -187,7 +210,6 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	int is_pagefault;
 	int is_stack;
 	int is_swapped;
-
 	vaddr_t faultpage;
 	int retval;
 
@@ -195,7 +217,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	struct addrspace *as = curthread->t_vmspace;
 	assert(as != NULL);
 
-	/* Determine if fault address is a page fault or not */
+	/* Detetermine a number of flags: is_pagefault, is_swapped, is_stack */
 	is_pagefault = 0;
 	faultpage = (faultaddress & PAGE_FRAME);
 	struct pte *faultentry = pt_get(as->as_pagetable, faultpage);
@@ -203,13 +225,13 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		is_pagefault = 1;
 	}
 
-	/* Check if this page is in swap file */
 	is_swapped = 0;
 	if(faultentry != NULL) {
-		is_swapped = faultentry->is_swapped;
+		if(faultentry->swap_state == PTE_SWAPPED) {
+			is_swapped = 1;
+		}
 	}
 
-	/* Check to see if faultpage is one below the current stackptr */
 	is_stack = 0;
 	if( faultpage >= (USERSTACKBASE) ) {
 		is_stack = 1;
@@ -268,7 +290,8 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 	assert(curspl>0);
 	(void) is_stack;
 	(void) as;
-	int idx, err;
+	int idx;
+	//int err;
 
 	if(!LOAD_ON_DEMAND_ENABLE){
 		(void) is_stack;
@@ -330,40 +353,19 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 	else if(!is_pagefault && !is_swapped) {
 		if(is_readable(faultentry->permissions)) {
 			idx = TLB_Replace(faultpage, faultentry->ppageaddr);
-			/* Update dirty and valid bits in TLB entry */
 			if(is_writeable(faultentry->permissions)) {
 				TLB_WriteDirty(idx, 1);
 			}
-			TLB_WriteDirty(idx, 1);
 			TLB_WriteValid(idx, 1);
-			//TLB_Stat();
 			return 0;
 		}
 		else {
-			//kprintf("No permission to read at page 0x%x\n", faultpage);
+			kprintf("No permission to read at page 0x%x\n", faultpage);
 			return EFAULT;
 		}
 	}
 	else if(!is_pagefault && is_swapped) {
-		/* Let's bring the page back in */
-		assert(faultentry->is_present == 0);	/* Haven't yet implented this */
-
-		alloc_upage(faultentry);
-		if(faultentry->ppageaddr == 0) {
-			return ENOMEM;
-		}
-		
-		/* faultentry fields are updated appropriately in swap_pageing */
-		err = swap_pagein(faultentry);
-		if(err) {
-			return err;
-		}
-
-		/* update TLB */
-		idx = TLB_Replace(faultpage, faultentry->ppageaddr);
-		TLB_WriteDirty(idx, 1);
-		TLB_WriteValid(idx, 1);
-		return 0;
+		return vm_swapfault(faultentry, faultaddress, VM_FAULT_READ);
 	}
 
 	panic("Should not reach here, vm_readfault");
@@ -376,7 +378,8 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 {
 	assert(curspl>0);
 
-	int idx, err;
+	int idx;
+	//int err;
 	//int result;
 
 	vaddr_t faultpage = (faultaddress & PAGE_FRAME);
@@ -384,47 +387,7 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 
 	/* Check to see if page fault is to the stack. If so we should allocate a page for the stack. */
 	if(is_pagefault && is_stack) {
-
-		int num_requested_pages = ((as->as_stackptr - faultpage) >> PAGE_OFFSET);
-		paddr_t faultpage_paddr;
-		struct pte *new_stack_entry;
-		vaddr_t vpageaddr;
-
-		for(idx=0; idx<num_requested_pages; idx++) {
-			vpageaddr = faultpage + PAGE_SIZE*idx;
-
-			new_stack_entry = pte_init();
-			if(new_stack_entry == NULL) {
-				return ENOMEM;
-			}
-
-			alloc_upage(new_stack_entry);
-			if(new_stack_entry->ppageaddr == 0) {
-				pte_destroy(new_stack_entry);
-				return ENOMEM;
-			}
-
-			/* entry->ppageaddr is updated by alloc_upage */
-			new_stack_entry->permissions = set_permissions(1, 1, 0);
-			new_stack_entry->is_present = 1;
-			new_stack_entry->is_swapped = 0;
-			new_stack_entry->swap_location = 0;
-
-			/* add entry to page table */
-			pt_add(as->as_pagetable, vpageaddr, new_stack_entry);
-
-			if(idx==0) {
-				faultpage_paddr = new_stack_entry->ppageaddr;
-			}
-		}	
-		as->as_stackptr -= PAGE_SIZE*num_requested_pages;
-		assert(as->as_stackptr == faultpage);
-		/* Add to the TLB */
-		idx = TLB_Replace(faultpage, faultpage_paddr);
-		TLB_WriteDirty(idx, 1);
-		TLB_WriteValid(idx, 1);
-		//TLB_Stat();
-		return 0;
+		return vm_stackfault(as, faultaddress);
 	}
 
 	if(is_pagefault && !is_stack) {
@@ -489,34 +452,111 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 		}
 	}
 	else if(!is_pagefault && is_swapped) {
-		if( is_writeable(faultentry->permissions )) {
-			/* Let's bring the page back in */
-			assert(faultentry->is_present == 0);	/* Haven't yet implented this */
-
-			alloc_upage(faultentry);
-			if(faultentry->ppageaddr == 0) {
-				return ENOMEM;
-			}
-			
-			/* faultentry fields are updated appropriately in swap_pageing */
-			err = swap_pagein(faultentry);
-			if(err) {
-				return err;
-			}
-
-			/* Update TLB */
-			idx = TLB_Replace(faultpage, faultentry->ppageaddr);
-			TLB_WriteDirty(idx, 1);
-			TLB_WriteValid(idx, 1);
-			return 0;
-		}
-		else {
-			kprintf("No permission to write to page 0x%x\n", faultpage);
-			return EFAULT;
-		}
+		return vm_swapfault(faultentry, faultaddress, VM_FAULT_WRITE);
 	}
-
+	else {
+		kprintf("No permission to write to page 0x%x\n", faultpage);
+		return EFAULT;
+	}
 	panic("Should not reach here, vm_writefault");
 	return 0;
 }
+
+/* Handle a fault that results from writing to the stack */
+int vm_stackfault(struct addrspace *as, vaddr_t faultaddress) 
+{
+		int idx, err;
+		paddr_t faultpage_paddr;
+		struct pte *new_stack_entry;
+		vaddr_t vpageaddr;
+		vaddr_t faultpage = (faultaddress & PAGE_FRAME);
+		int num_requested_pages = ((as->as_stackptr - faultpage) >> PAGE_OFFSET);
+
+		for(idx=0; idx<num_requested_pages; idx++) {
+			lock_acquire(swap_lock);
+
+			vpageaddr = faultpage + PAGE_SIZE*idx;
+
+			new_stack_entry = pte_init();
+			if(new_stack_entry == NULL) {
+				return ENOMEM;
+			}
+
+			if(idx==0) {
+				/* For the fault page, we actually give it a physical page */
+				alloc_upage(new_stack_entry);
+				if(new_stack_entry->ppageaddr == 0) {
+					lock_release(swap_lock);
+					pte_destroy(new_stack_entry);
+					return ENOMEM;
+				}
+				faultpage_paddr = new_stack_entry->ppageaddr;
+				
+				/* entry->ppageaddr is updated by alloc_upage */
+				new_stack_entry->permissions = set_permissions(1, 1, 0);
+				new_stack_entry->swap_state = PTE_PRESENT;
+				new_stack_entry->swap_location = 0;
+			}
+			else {
+				/* for the others, we simply allocate swap storage */
+				err = swap_allocpage_od(new_stack_entry);
+				if(err) {
+					lock_release(swap_lock);
+					return err;
+				}
+				new_stack_entry->permissions = set_permissions(1, 1, 0);
+			}
+
+			/* add entry to page table */
+			pt_add(as->as_pagetable, vpageaddr, new_stack_entry);
+
+			lock_release(swap_lock);
+		}	
+
+		as->as_stackptr -= PAGE_SIZE*num_requested_pages;
+		assert(as->as_stackptr == faultpage);
+
+		/* Add to the TLB */
+		idx = TLB_Replace(faultpage, faultpage_paddr);
+		TLB_WriteDirty(idx, 1);
+		TLB_WriteValid(idx, 1);
+		return 0;
+}
+
+
+/* Handle a fault that results from reading/writing to a swapped page */
+int vm_swapfault(struct pte *faultentry, vaddr_t faultaddress, int faulttype)
+{
+	int err, idx;
+	vaddr_t faultpage = (faultaddress & PAGE_FRAME);
+
+	/* Check to see if we have proper permissions */
+	if(faulttype == VM_FAULT_READ && !is_readable(faultentry->permissions)) {
+		return EFAULT;
+	}
+	else if(faulttype == VM_FAULT_WRITE && !is_writeable(faultentry->permissions)) {
+		return EFAULT;
+	}
+
+	lock_acquire(swap_lock);
+
+	/* Lets swap in the page */
+	err = swap_pagein(faultentry);
+	if(err) {
+		return err;
+	}
+	assert(faultentry->swap_state == PTE_CLEAN ); /* Just loaded the page, it should be clean */
+	assert(faultentry->ppageaddr != 0);
+
+	faultentry->swap_state = PTE_DIRTY; 	/* For now we assume that its just dirty. Later we will use dirty bit and readonly fault. */
+
+	/* update TLB */
+	idx = TLB_Replace(faultpage, faultentry->ppageaddr);
+	TLB_WriteDirty(idx, 1);
+	TLB_WriteValid(idx, 1);
+
+	lock_release(swap_lock);
+	return 0;
+}
+
 

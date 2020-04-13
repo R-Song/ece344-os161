@@ -24,6 +24,7 @@
 #include <uio.h>
 #include <elf.h>
 #include <vfs.h>
+#include <swap.h>
 
 
 /* current active address space id */
@@ -156,6 +157,8 @@ void
 as_destroy(struct addrspace *as)
 {
 	assert(as != NULL);
+	int spl = splhigh();
+	lock_acquire(swap_lock);
 
 	/* Give up the addrspace id */
 	if(TLB_ASID_ENABLE) {
@@ -174,6 +177,9 @@ as_destroy(struct addrspace *as)
 	kfree(as->as_data);
 	pt_destroy(as->as_pagetable);
 	kfree(as);
+
+	lock_release(swap_lock);
+	splx(spl);
 }
 
 
@@ -188,6 +194,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 {
 	int err;
 	int spl = splhigh();
+	lock_acquire(swap_lock);
 
 	/* Allocate space for new addrspace */
 	struct addrspace *new;
@@ -235,8 +242,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		/* Initialize all the pages */
 		struct pte *entry = pt_get(new->as_pagetable, vaddr);
 		entry->ppageaddr = 0;
-		entry->is_present = 0;
-		entry->is_swapped = 0;
+		entry->swap_state = PTE_NONE;
 		entry->swap_location = 0;
 	}
 
@@ -278,8 +284,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		else {
 			panic("Unknown region. Memory is not managed properly.");
 		}
-		new_entry->is_present = 1;
-		new_entry->is_swapped = 0;
+		new_entry->swap_state = PTE_PRESENT;
 		new_entry->swap_location = 0;
 
 		/*
@@ -291,8 +296,10 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 				PAGE_SIZE);
 			
 		assert(old_entry->ppageaddr != new_entry->ppageaddr);
+
 	}
 
+	lock_release(swap_lock);
 	*ret = new;
 	splx(spl);
 	return 0;
@@ -334,6 +341,8 @@ as_prepare_load(struct addrspace *as)
 
 		/* Code segment */
 		for(i=0; i<as->as_code->npages; i++) {	
+			lock_acquire(swap_lock);
+
 			entry = pte_init();
 			if(entry == NULL) {
 				splx(spl);
@@ -344,22 +353,26 @@ as_prepare_load(struct addrspace *as)
 			alloc_upage(entry);
 			if(entry->ppageaddr == 0) {
 				pte_destroy(entry);
+				lock_release(swap_lock);
 				splx(spl);
 				return ENOMEM;
 			}
 
 			/* entry->ppageaddr is updated by alloc_upage */
 			entry->permissions = set_permissions(1, 1, 1); /* RWX */
-			entry->is_present = 1;
-			entry->is_swapped = 0;
+			entry->swap_state = PTE_PRESENT;
 			entry->swap_location = 0;
 
 			/* add entry to page table */
 			pt_add(as->as_pagetable, vpageaddr, entry);
+
+			lock_release(swap_lock);
 		}
 
 		/* Data segment */
 		for(i=0; i<as->as_data->npages; i++) {
+			lock_acquire(swap_lock);
+
 			entry = pte_init();
 			if(entry == NULL) {
 				splx(spl);
@@ -376,12 +389,13 @@ as_prepare_load(struct addrspace *as)
 
 			/* entry->ppageaddr is updated by alloc_upage */
 			entry->permissions = set_permissions(1, 1, 1); /* RWX */
-			entry->is_present = 1;
-			entry->is_swapped = 0;
+			entry->swap_state = PTE_PRESENT;
 			entry->swap_location = 0;
 
 			/* add entry to page table */
 			pt_add(as->as_pagetable, vpageaddr, entry);
+
+			lock_release(swap_lock);
 		}
 
 		splx(spl);

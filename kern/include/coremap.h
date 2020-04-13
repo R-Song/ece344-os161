@@ -24,15 +24,13 @@ struct pte;
  * ppagestate_t, physical page state type
  *
  * S_FREE: Page is not allocated    
- * S_DIRTY: Contents of page are not consistent with swap disk
- * S_CLEAN: Page is allocated and which has contents that agree with swap disk
- * S_FIXED: pages that should not ever be swapped out. These are kernel pages (direct mapped) and user code/data segments
+ * S_USER: User allocated page
+ * S_KERN: Direct mapped kernel pages
  */
 typedef enum {
     S_FREE,
-    S_DIRTY,
-    S_FIXED,
-    S_CLEAN,
+    S_USER,
+    S_KERN,
 } ppagestate_t;
 
 
@@ -58,6 +56,8 @@ struct coremap_entry {
  * Read coremap.c for more information on how each function is implemented
  */
 
+extern struct coremap_entry *coremap;
+
 /* Initialize coremap structure */
 void    coremap_bootstrap();
 
@@ -70,7 +70,8 @@ void    free_ppages(paddr_t paddr);
 /* Debugging */
 void    coremap_stat();
 
-/* Functions to help swap */
-int coremap_swaphelper(int npages);
+/* Functions to help with swapping */
+struct pte *coremap_swap_pageout();
+int         coremap_swap_createspace(int npages);
 
 #endif /* _COREMAP_H_ */

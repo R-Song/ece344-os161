@@ -298,7 +298,7 @@ int coremap_swap_createspace(int npages)
             switch(entry_to_swap->swap_state) {
                 case PTE_PRESENT:
                     /* we have to allocate a place in swap memory and evict */
-                    err = swap_allocpage(&swap_location);
+                    err = swap_diskalloc(&swap_location);
                     if(err) {
                         return err;
                     }
@@ -306,7 +306,7 @@ int coremap_swap_createspace(int npages)
                     /* write to this location */
                     err = swap_write(swap_location, entry_to_swap->ppageaddr);
                     if(err) {
-                        swap_freepage(swap_location);
+                        swap_diskfree(swap_location);
                         return err;
                     }
                     

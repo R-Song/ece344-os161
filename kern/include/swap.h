@@ -85,7 +85,7 @@ int swap_allocpage_od(struct pte *entry);
 /*
  * Use to free a page from the swap disk
  */
-void swap_freepage(u_int32_t swap_location);
-int  swap_allocpage(u_int32_t *swap_location);
+void swap_diskfree(u_int32_t swap_location);
+int  swap_diskalloc(u_int32_t *swap_location);
 
 #endif /* _SWAP_H_ */

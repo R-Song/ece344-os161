@@ -548,7 +548,6 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 
 				free_upage(new_entry);
 				pt_remove(as->as_pagetable, vaddr);
-				pte_destroy(new_entry);
 
 				lock_release(swap_lock);
 			}
@@ -580,7 +579,6 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 
 				free_upage(new_entry);
 				pt_remove(as->as_pagetable, vaddr);
-				pte_destroy(new_entry);
 
 				lock_release(swap_lock);
 			}

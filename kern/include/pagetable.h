@@ -49,6 +49,7 @@ struct pte {
     u_int32_t swap_location;        /* swap location on disk */
 
     /* following information is used to implement copy on write */
+    int num_sharers;                /* counts how many threads are sharing this pte. If thsi is 0, pte is not shared */
 };
 
 /* create and destroy a pte */
@@ -143,8 +144,11 @@ struct pte *pt_get(pagetable_t pt, vaddr_t vaddr);
 /* get the next populated vaddr */
 vaddr_t pt_getnext(pagetable_t pt, vaddr_t vaddr);
 
-/* copy a page table */
+/* copy a page table deep */
 int pt_copy(pagetable_t src, pagetable_t dest);
+
+/* copy a page table shallow */
+int pt_copy_shallow(pagetable_t src, pagetable_t dest);
 
 /* remove entry from the page table */
 void pt_remove(pagetable_t pt, vaddr_t vaddr);

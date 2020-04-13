@@ -301,7 +301,7 @@ int swap_allocpage_od(struct pte *entry)
 
     u_int32_t swap_location;
 
-    err = swap_allocpage(&swap_location);
+    err = swap_diskalloc(&swap_location);
     if(err) {
         return err;
     }
@@ -316,15 +316,15 @@ int swap_allocpage_od(struct pte *entry)
 
 
 /*
- * Work with the bitmap
+ * Let other files allocate or deallocate swap disk space
  */
-void swap_freepage(u_int32_t swap_location)
+void swap_diskfree(u_int32_t swap_location)
 {
     assert( lock_do_i_hold(swap_lock) );
     bitmap_unmark(swap_bitmap, swap_location);
 }
 
-int swap_allocpage(u_int32_t *swap_location)
+int swap_diskalloc(u_int32_t *swap_location)
 {
     assert( lock_do_i_hold(swap_lock) );
     int err;

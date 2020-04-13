@@ -237,7 +237,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	}
 
 	is_stack = 0;
-	if( faultpage >= (USERSTACKBASE) ) {
+	if( faultpage >= (USERSTACKBASE) && faultpage < as->as_stackptr ) {
 		is_stack = 1;
 	}
 
@@ -268,7 +268,8 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 		case VM_FAULT_READONLY:
 			retval = vm_readonlyfault(as, faultentry, faultaddress, is_pagefault, is_stack, is_swapped, is_shared);
-
+			break;
+			
 		default:
 			retval = EINVAL;
 	}
@@ -668,8 +669,8 @@ struct pte *vm_copyonwritefault(struct addrspace *as, struct pte *old_faultentry
 		if(err) {
 			return NULL;
 		}
+		new_faultentry->swap_state = PTE_DIRTY; 	/* For now we assume that its just dirty. Later we will use dirty bit and readonly fault. */
 	}
-	new_faultentry->swap_state = PTE_DIRTY; 	/* For now we assume that its just dirty. Later we will use dirty bit and readonly fault. */
 
 	/* update TLB */
 	TLB_Flush(); // avoid duplicate tlb entries

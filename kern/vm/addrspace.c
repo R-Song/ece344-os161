@@ -158,6 +158,8 @@ as_destroy(struct addrspace *as)
 {
 	assert(as != NULL);
 	int spl = splhigh();
+
+	int lock_held_prior = lock_do_i_hold(swap_lock);
 	lock_acquire(swap_lock);
 
 	/* Give up the addrspace id */
@@ -178,7 +180,9 @@ as_destroy(struct addrspace *as)
 	pt_destroy(as->as_pagetable);
 	kfree(as);
 
-	lock_release(swap_lock);
+	if(!lock_held_prior) {
+		lock_release(swap_lock);
+	}
 	splx(spl);
 }
 

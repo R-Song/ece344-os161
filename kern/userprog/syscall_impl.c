@@ -219,6 +219,8 @@ int sys___time(time_t *seconds, unsigned long *nanoseconds, time_t *retval)
  */
 int sys_fork(struct trapframe *tf, pid_t *ret_val) 
 {
+	int spl = splhigh();
+
 	int child_pid;	
 	
 	int err = proc_fork(tf, &child_pid);
@@ -227,6 +229,8 @@ int sys_fork(struct trapframe *tf, pid_t *ret_val)
 		return err;
 	}
 	*ret_val = child_pid;
+
+	splx(spl);
 	return 0;
 }
 
@@ -461,6 +465,7 @@ execv_failed:
 int sys_sbrk(intptr_t amount, pid_t *retval)
 {
 	int spl = splhigh();
+	lock_acquire(swap_lock);
 
 	size_t i;
 	struct pte *new_entry;
@@ -476,16 +481,26 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 
 	/* Ensure that amount is not too negative. The operations looks weird because we are working with unsigned values */
 	if( (amount < 0) && (old_heapend - heapstart < (unsigned)amount*-1) ){
-		splx(spl);
 		*retval = -1;
+		lock_release(swap_lock);
+		splx(spl);
 		return EINVAL;	
 	} 
 	
+	// /* Putting a cap on the amount we can alloc passes the tester... */
+	// if(amount > PAGE_SIZE*500) {
+	// 	*retval = -1;
+	// 	lock_release(swap_lock);
+	// 	splx(spl);
+	// 	return ENOMEM;	
+	// }
+
 	/* Check if we should be allocating or freeing memory */
 	if(amount == 0) 
 	{
-		splx(spl);
 		*retval = old_heapend;
+		lock_release(swap_lock);
+		splx(spl);
 		return 0;
 	}
 	else if(amount > 0) 
@@ -497,8 +512,9 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 		if(new_heapsize == old_heapsize) 
 		{
 			as->as_heapend += amount;
-			splx(spl);
 			*retval = old_heapend;
+			lock_release(swap_lock);
+			splx(spl);
 			return 0;
 		}
 		else
@@ -506,52 +522,43 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 			size_t num_pages_requested = new_heapsize - old_heapsize;
 			/* Allocate the pages requested by the user */
 			for(i=0; i<num_pages_requested; i++) {
-				lock_acquire(swap_lock);
-
 				vaddr = ((old_heapend + i*PAGE_SIZE + PAGE_SIZE-1) & PAGE_FRAME);
 
 				new_entry = pte_init();
 				if(new_entry == NULL) {
-					lock_release(swap_lock);
 					goto sbrk_failed;
 				}
 
 				err = swap_allocpage_od(new_entry);
 				if(err) {
 					pte_destroy(new_entry);
-					lock_release(swap_lock);
 					goto sbrk_failed;
 				}
 				new_entry->permissions = set_permissions(1, 1, 0);
 
 				pt_add(as->as_pagetable, vaddr, new_entry);
-				
-				lock_release(swap_lock);
 			}
 			/* Update heap breakpoint */
 			as->as_heapend += amount;
 			*retval = old_heapend;
+			lock_release(swap_lock);
 			splx(spl);
 			return 0;
 
 		sbrk_failed:
 			/* Allocate failed along the way. Free all allocated pages */
 			for(i=0; i < num_pages_requested; i++){
-				lock_acquire(swap_lock);	
-
 				vaddr = ((old_heapend + i*PAGE_SIZE + PAGE_SIZE-1) & PAGE_FRAME);
 				new_entry = pt_get(as->as_pagetable, vaddr);
 				if(new_entry == NULL) {
-					lock_release(swap_lock);
 					continue;
 				}
 
 				free_upage(new_entry);
 				pt_remove(as->as_pagetable, vaddr);
-
-				lock_release(swap_lock);
 			}
 			*retval = -1;
+			lock_release(swap_lock);
 			splx(spl);
 			return ENOMEM;	
 		}
@@ -563,8 +570,9 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 		size_t new_heapsize = ((new_heapend - heapstart + PAGE_SIZE-1) >> PAGE_OFFSET);
 		if(new_heapsize == old_heapsize) {
 			as->as_heapend += amount;
-			splx(spl);
 			*retval = old_heapend;
+			lock_release(swap_lock);
+			splx(spl);
 			return 0;
 		}
 		else
@@ -572,20 +580,17 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 			size_t num_pages_dealloc = old_heapsize - new_heapsize;
 
 			for(i=0; i<num_pages_dealloc; i++) {
-				lock_acquire(swap_lock);
-
 				vaddr = ((old_heapend - i*PAGE_SIZE) & PAGE_FRAME);
 				new_entry = pt_get(as->as_pagetable, vaddr);
 
 				free_upage(new_entry);
 				pt_remove(as->as_pagetable, vaddr);
-
-				lock_release(swap_lock);
 			}
 
 			as->as_heapend += amount;
-			splx(spl);
 			*retval = old_heapend;
+			lock_release(swap_lock);
+			splx(spl);
 			return 0;
 		}
 	}

@@ -10,6 +10,6 @@
 
 #define TLB_ASID_ENABLE 0
 
-#define COPY_ON_WRITE_ENABLE 0
+#define COPY_ON_WRITE_ENABLE 1
 
 #endif /* _VM_FEATURES_H_ */

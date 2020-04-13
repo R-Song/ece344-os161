@@ -112,17 +112,20 @@ load_segment_od(struct vnode *v, off_t offset, vaddr_t vaddr,
 
 	/* Check whether we are working with as_code or as_data segment */
 	int is_code_seg = is_vaddrcode(curthread->t_vmspace, vaddr);
-	int is_data_seg = is_vaddrcode(curthread->t_vmspace, vaddr);
+	int is_data_seg = is_vaddrdata(curthread->t_vmspace, vaddr);
 	
 	/* the addrspace resides in the code region/segment */
 	if(is_code_seg){
 		curthread->t_vmspace->as_code->file = v;
 		curthread->t_vmspace->as_code->uio = u;
+		//kprintf("My little vnode %p \n", curthread->t_vmspace->as_code->file);
 	}
-	else if(is_data_seg){
+	else if(is_data_seg) {
 		curthread->t_vmspace->as_data->file = v;
 		curthread->t_vmspace->as_data->uio = u;
+		//kprintf("My little vnode %p \n", curthread->t_vmspace->as_data->file);
 	}
+
 	//else{
 		// can this happen???
 		// panic??? 
@@ -514,5 +517,5 @@ int load_page_od(struct vnode *v, struct uio u, off_t p_offset)
 		result = uiomovezeros(fillamt, &u);
 	}	
 
-	return 0;
+	return result;
 }

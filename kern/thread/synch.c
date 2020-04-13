@@ -143,47 +143,44 @@ lock_destroy(struct lock *lock)
 void
 lock_acquire(struct lock *lock)
 {
-	int spl;
-	assert(lock != NULL);
-	assert(in_interrupt==0);
-	/* Do nothing if this thread already owns the lock... */
+	int spl = splhigh();
+
+	assert(lock != NULL && in_interrupt==0);
 	if(lock->owner == curthread) {
+		splx(spl);
 		return;
 	}
 
 	/* Disable interrupts, sleep on lock until released */
-	spl = splhigh();
 	while (lock->held==1) {
 		thread_sleep(lock);
 	}
-	/* Acquire the lock */
+
 	assert(lock->held==0);
 	assert(lock->owner==NULL);
 	lock->held = 1;
 	lock->owner = curthread;
+
 	splx(spl);
 }
 
 void
 lock_release(struct lock *lock)
 {
-	int spl;
+	int spl = splhigh();
+
 	assert(lock != NULL);
 	/* Make sure caller of this thread owns the lock */
-	if(lock->owner != curthread) {
-		return;
-	}
-	if(lock->held != 1) {
+	if(lock->owner != curthread || lock->held != 1) {
+		splx(spl);
 		return;
 	}
 
 	/* Disable interrupts, release lock, wakeup thread(s) waiting for the lock */
-	spl = splhigh();
-	assert(lock->held==1);
-	assert(lock->owner==curthread);
 	lock->held = 0;
 	lock->owner = NULL;
 	thread_wakeup(lock);
+
 	splx(spl);
 }
 

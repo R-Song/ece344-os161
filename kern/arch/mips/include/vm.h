@@ -50,7 +50,8 @@
  * We put the stack at the very top of user virtual memory because it
  * grows downwards.
  */
-#define USERSTACK   USERTOP
+#define USERSTACK       USERTOP
+#define USERSTACKBASE   0x70000000
 
 /*
  * Interface to the low-level module that looks after the amount of

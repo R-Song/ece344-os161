@@ -18,6 +18,8 @@
 #ifndef _COREMAP_H_
 #define _COREMAP_H_
 
+struct pte;
+
 /* 
  * ppagestate_t, physical page state type
  *
@@ -40,22 +42,14 @@ typedef enum {
  * Kernel pages are always in state S_FIXED and are directly mapped from virtual address to physical.
  */
 struct coremap_entry {
-    /* for user pages, we care about the owner thread to ensure protection from other processes */
-    struct thread *owner;
-    
     /* state of the physical page (ppage) */
     ppagestate_t state;
-
-    /* Is this page a kernel of user page? */
-    int is_kernel;
-
-    /* virtual page number */
-    int vpage_num;
 
     /* number of pages allocated. This number is only useful for the first page in a chain of allocated pages */
     int num_pages_allocated;
 
-    /* Add more information as we go */
+    /* age table entry associated with this coremap entry. NULL if this is a kernel entry */
+    struct pte *pt_entry;
 };
 
 
@@ -68,7 +62,7 @@ struct coremap_entry {
 void    coremap_bootstrap();
 
 /* Allocates a physical page if available */
-paddr_t get_ppages(int npages, int is_fixed, int is_kernel);
+paddr_t get_ppages(int npages, int is_kernel, struct pte *pt_entry);
 
 /* Deallocate a physical page */
 void    free_ppages(paddr_t paddr);
@@ -76,7 +70,7 @@ void    free_ppages(paddr_t paddr);
 /* Debugging */
 void    coremap_stat();
 
-/* Add more functions later to implement other state transitions, flush, write... */
-
+/* Functions to help swap */
+int coremap_swaphelper(int npages);
 
 #endif /* _COREMAP_H_ */

@@ -2,6 +2,7 @@
 #include <types.h>
 #include <pagetable.h>
 #include <coremap.h>
+#include <permissions.h>
 #include <lib.h>
 #include <synch.h>
 #include <kern/errno.h>
@@ -20,29 +21,30 @@ struct pte *pte_init()
     if(entry == NULL) {
         return NULL;
     }
-    entry->pte_mutex = sem_create("pte mutex", 1);
-    if(entry->pte_mutex == NULL) {
-        kfree(entry);
-        return NULL;
-    }
-    entry->num_users = 0;
     entry->ppageaddr = 0;
+    entry->permissions = set_permissions(0,0,0);
+    entry->is_present = 0;
+    entry->is_swapped = 0;
+    //entry->is_clean = 0;
+    entry->swap_location = 0;
     return entry;
-}
-
-/* pte_destroy() */
-void pte_destroy(struct pte *entry) 
-{
-    kfree(entry->pte_mutex);
-    kfree(entry);
 }
 
 /* pte_copy() */
 void pte_copy(struct pte *src, struct pte *dest) 
 {
     dest->ppageaddr = src->ppageaddr;
-    dest->dirty = dest->dirty;
     dest->permissions = src->permissions;
+    dest->is_present = src->is_present;
+    dest->is_swapped = src->is_swapped;
+    //dest->is_clean = src->is_clean;
+    dest->swap_location = src->swap_location;
+}
+
+/* pte_destroy() */
+void pte_destroy(struct pte *entry) 
+{
+    kfree(entry);
 }
 
 

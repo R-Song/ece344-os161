@@ -23,16 +23,17 @@ void vm_bootstrap(void);
 
 /* Fault handling function called by trap code */
 int vm_fault(int faulttype, vaddr_t faultaddress);
-int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int is_pagefault, int is_stack);
-int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int is_pagefault, int is_stack);
+
+int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int is_pagefault, int is_stack, int is_swapped);
+int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int is_pagefault, int is_stack, int is_swapped);
 
 /* Allocate/free kernel heap pages (called by kmalloc/kfree) */
 vaddr_t alloc_kpages(int npages);
-void free_kpages(vaddr_t addr);
+void    free_kpages(vaddr_t addr);
 
 /* Allocate/free user pages */
-struct pte *alloc_upage(struct addrspace *as, vaddr_t vaddr);
-void free_upage(struct addrspace *as, vaddr_t vaddr);
+void    alloc_upage(struct pte *entry);
+void    free_upage(struct pte *entry);
 
 /* Debug function */
 #if OPT_DUMBVM

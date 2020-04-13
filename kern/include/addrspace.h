@@ -16,7 +16,6 @@
 
 
 struct vnode;
-struct uio;
 
 /*
  * Definition of as_region

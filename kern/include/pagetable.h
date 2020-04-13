@@ -20,14 +20,18 @@
  * Definition and operation on page table entries (pte)
  * right now just has physical mapping, but will need more fields later...
  ******************************************************************************/
+
 struct pte {
-	paddr_t ppageaddr;
-    /* Tentative fields to add to support copy on write */
-    struct semaphore *pte_mutex; /* Mutual exclusion for this page */
-    int num_users;               /* How many users are reading from this page? */
-    int dirty;                   /* Is this page safe to write to */
-    /* permissions */
-    permissions_t permissions;
+	paddr_t ppageaddr;              /* Physical address mapping */
+    permissions_t permissions;      /* permissions for access */
+
+    /* following information is used for demand paging */
+    int is_present;                 /* is this page present in physical memory */
+    int is_swapped;                 /* is this page on the swap disk */
+    //int is_clean;                   /* is the page in memory identitical to the one on disk */
+    u_int32_t swap_location;        /* swap location on disk */
+
+    /* following information is used to implement copy on write */
 };
 
 /* create and destroy a pte */

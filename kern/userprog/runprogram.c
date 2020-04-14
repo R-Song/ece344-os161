@@ -49,7 +49,6 @@ runprogram(char *progname, char **argv, unsigned long size_args)
 	/* Activate it. */
 	as_activate(curthread->t_vmspace);
 
-
 	/* Load the executable. */
 	if(LOAD_ON_DEMAND_ENABLE){
 		result = load_elf_od(v, &entrypoint);
@@ -63,9 +62,6 @@ runprogram(char *progname, char **argv, unsigned long size_args)
 		vfs_close(v);
 		return result;
 	}
-
-	/* Done with the file now. */
-	//vfs_close(v);
 
 	/* Define the user stack in the address space */
 	result = as_define_stack(curthread->t_vmspace, &stackptr);

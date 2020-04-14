@@ -8,8 +8,8 @@
 
 #define SWAPPING_ENABLE 1
 
-#define TLB_ASID_ENABLE 0
-
 #define COPY_ON_WRITE_ENABLE 1
+
+#define TLB_ASID_ENABLE 0
 
 #endif /* _VM_FEATURES_H_ */

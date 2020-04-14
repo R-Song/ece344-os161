@@ -148,7 +148,9 @@ int is_vaddrstack(struct addrspace *as, vaddr_t vaddr);
  */
 
 int load_elf(struct vnode *v, vaddr_t *entrypoint);
+
 int load_elf_od(struct vnode *v, vaddr_t *entrypoint);
+int load_segment_od(struct vnode *v, off_t offset, vaddr_t vaddr, size_t memsize, size_t filesize, int is_executable);
 int load_page_od(struct vnode *v, struct uio u, off_t p_offset);
 
 #endif /* _ADDRSPACE_H_ */

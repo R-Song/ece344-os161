@@ -199,7 +199,6 @@ free_upage(struct pte *entry)
  * 2. Fault on Read, No Page Fault: 	Add it to the TLB
  * 3. Fault on Write, Page Fault: 		If they are writing to the correct stackptr, then allocate a new page. Otherwise kill the program
  * 4. Fault on Write, No Page Fault: 	Add it into the TLB. Check if the page in question is writable though
- * 
  */ 
 
 int
@@ -207,8 +206,6 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 {	
 	int spl = splhigh();
 	lock_acquire(swap_lock);
-
-	//kprintf("faultaddress at 0x%08x\n", faultaddress);
 
 	int is_pagefault, is_stack, is_swapped, is_shared;
 	vaddr_t faultpage;
@@ -294,77 +291,24 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 					int is_pagefault, int is_stack, int is_swapped, int is_shared)
 {
 	assert(curspl>0);
+	assert(lock_do_i_hold(swap_lock));
+
 	int idx;
+	(void) is_stack;
 
-	if(!LOAD_ON_DEMAND_ENABLE){
-		(void) is_stack;
-		(void) as;
-	}
-
-	int result;
 	vaddr_t faultpage = (faultaddress & PAGE_FRAME);
-	off_t p_offset;
 
 	if(is_pagefault) {
 		if(LOAD_ON_DEMAND_ENABLE) {
-			/* Check whether we are working with as_code or as_data segment */
-			int is_code_seg = is_vaddrcode(as, faultpage);
-			int is_data_seg = is_vaddrdata(as, faultpage);
-
-			/* Sanity check - the only two other possibilities I see, since we already checked for validity, 
-			 * is that the vaddr is in the heap or somewhere else on the stack
-			 */
-			if(!is_code_seg && !is_data_seg){
-				return EFAULT;
-			}
-
-		    struct pte *new_entry;
-			new_entry = pte_init();
-			if(new_entry == NULL){
-				return ENOMEM;
-			}
-
-			/* Allocate space for it in physical memory to store it */
-			alloc_upage(new_entry);
-			if(new_entry->ppageaddr == 0) {
-				pte_destroy(new_entry);
-				return ENOMEM;
-			}
-			new_entry->permissions = set_permissions(1, 1, 1); /* RWX */
-			new_entry->swap_state = PTE_PRESENT;
-			new_entry->swap_location = 0;
-
-			/* add entry to page table */
-			pt_add(as->as_pagetable, faultpage, new_entry);	//faultpage or faultaddress???
-			
-			/* Add to the TLB */
-			idx = TLB_Replace(faultpage, new_entry->ppageaddr);
-			TLB_WriteDirty(idx, 1);
-			TLB_WriteValid(idx, 1);	
-
-			if(is_code_seg){
-				p_offset = faultpage - as->as_code->vbase;
-				result = load_page_od(as->as_code->file, as->as_code->uio, p_offset);
-				if(result){
-					return result;
-				}	
-			}
-			else if(is_data_seg){
-				p_offset = faultpage - as->as_data->vbase;
-				result = load_page_od(as->as_data->file, as->as_data->uio, p_offset);
-				if(result){
-					return result;
-				}			
-			}
-			return 0;	
+			return vm_lodfault(as, faultaddress, VM_FAULT_READ);
 		}
 		else {
-			//kprintf("Bad read at page 0x%x\n", faultpage);
 			return EFAULT;
 		}
 
 	}
-	else if(!is_pagefault && !is_swapped) {
+	
+	if(!is_pagefault && !is_swapped) {
 		if(is_readable(faultentry->permissions)) {
 			idx = TLB_Replace(faultpage, faultentry->ppageaddr);
 			if( is_writeable(faultentry->permissions) && !is_shared ) {
@@ -381,7 +325,8 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 			return EFAULT;
 		}
 	}
-	else if(!is_pagefault && is_swapped) {
+	
+	if(!is_pagefault && is_swapped) {
 		return vm_swapfault(faultentry, faultaddress, VM_FAULT_READ);
 	}
 
@@ -397,9 +342,7 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 	assert(curspl>0);
 	assert(lock_do_i_hold(swap_lock));
 
-	int idx, result;
-	off_t p_offset;
-
+	int idx;
 
 	vaddr_t faultpage = (faultaddress & PAGE_FRAME);
 
@@ -420,60 +363,9 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 
 	if(is_pagefault && !is_stack) {
 		if(LOAD_ON_DEMAND_ENABLE) {
-			/* Check whether we are working with as_code or as_data segment */
-			int is_code_seg = is_vaddrcode(as, faultpage);
-			int is_data_seg = is_vaddrdata(as, faultpage);
-
-			/* Sanity check - the only two other possibilities I see, since we already checked for validity, 
-			 * is that the vaddr is in the heap or somewhere else on the stack
-			 */
-			if(!is_code_seg && !is_data_seg){
-				return EFAULT;
-			}
-
-		    struct pte *new_entry;
-			new_entry = pte_init();
-			if(new_entry == NULL){
-				return ENOMEM;
-			}
-
-			/* Allocate space for it in physical memory to store it */
-			alloc_upage(new_entry);
-			if(new_entry->ppageaddr == 0) {
-				pte_destroy(new_entry);
-				return ENOMEM;
-			}
-			new_entry->permissions = set_permissions(1, 1, 1); /* RWX */
-			new_entry->swap_state = PTE_PRESENT;
-			new_entry->swap_location = 0;
-
-			/* add entry to page table */
-			pt_add(as->as_pagetable, faultpage, new_entry);	//faultpage or faultaddress??
-
-			/* Add to the TLB */
-			idx = TLB_Replace(faultpage, new_entry->ppageaddr);
-			TLB_WriteDirty(idx, 1);
-			TLB_WriteValid(idx, 1);
-
-			if(is_code_seg){
-				p_offset = faultpage - as->as_code->vbase;
-				result = load_page_od(as->as_code->file, as->as_code->uio, p_offset);
-				if(result){
-					return result;
-				}	
-			}
-			else if(is_data_seg){
-				p_offset = faultpage - as->as_data->vbase;
-				result = load_page_od(as->as_data->file, as->as_data->uio, p_offset);
-				if(result){
-					return result;
-				}			
-			}
-			return 0;	
+			return vm_lodfault(as, faultaddress, VM_FAULT_WRITE);
 		}
 		else {
-			/* Illegal write to unallocated memory to the stack. Segfault. */
-		    //kprintf("Bad write to page 0x%x\n", faultpage);
 		    return EFAULT;
 		}
 	}
@@ -487,19 +379,16 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 			return 0;
 		}
 		else {
-			//kprintf("No permission to write to page 0x%x\n", faultpage);
 			return EFAULT;
 		}
 	}
-	else if(!is_pagefault && is_swapped) {
+	
+	if(!is_pagefault && is_swapped) {
 		return vm_swapfault(faultentry, faultaddress, VM_FAULT_WRITE);
 	}
 	else {
-		kprintf("No permission to write to page 0x%x\n", faultpage);
 		return EFAULT;
 	}
-	panic("Should not reach here, vm_writefault");
-	return 0;
 }
 
 /* Only purpose is to help us implement COW. If it hits here, it means that we should copy the entry, and set it to writable */
@@ -525,6 +414,10 @@ int vm_readonlyfault(struct addrspace *as, struct pte *faultentry, vaddr_t fault
 	return 0;
 }
 
+
+/***********************************************************************
+ **************** Specific Faults **************************************
+ ***********************************************************************/
 
 /* Handle a fault that results from writing to the stack */
 int vm_stackfault(struct addrspace *as, vaddr_t faultaddress) 
@@ -699,6 +592,77 @@ struct pte *vm_copyonwritefault(struct addrspace *as, struct pte *old_faultentry
 	TLB_WriteValid(idx, 1);
 
 	return new_faultentry;
+}
+
+
+/* 
+ * Handle faults for load on demand. These are pagefaults that fall within a valid code/data region 
+ */
+int vm_lodfault(struct addrspace *as, vaddr_t faultaddress, int faulttype)
+{
+	int idx, result;
+	vaddr_t faultpage = (faultaddress & PAGE_FRAME);
+	off_t p_offset;
+
+	/* Check whether we are working with as_code or as_data segment */
+	int is_code_seg = is_vaddrcode(as, faultpage);
+	int is_data_seg = is_vaddrdata(as, faultpage);
+
+	/* Sanity check - the only two other possibilities I see, since we already checked for validity, 
+	 * is that the vaddr is in the heap or somewhere else on the stack
+	 */
+	if(!is_code_seg && !is_data_seg){
+		return EFAULT;
+	}
+	if(is_code_seg && faulttype == VM_FAULT_WRITE) {
+		return EFAULT;
+	}
+
+	struct pte *new_entry;
+	new_entry = pte_init();
+	if(new_entry == NULL){
+		return ENOMEM;
+	}
+
+	/* Allocate space for it in physical memory to store it */
+	alloc_upage(new_entry);
+	if(new_entry->ppageaddr == 0) {
+		pte_destroy(new_entry);
+		return ENOMEM;
+	}
+	new_entry->permissions = set_permissions(1, 1, 1); /* RWX */
+	new_entry->swap_state = PTE_PRESENT;
+	new_entry->swap_location = 0;
+
+	/* add entry to page table */
+	pt_add(as->as_pagetable, faultpage, new_entry);	//faultpage or faultaddress??
+
+	/* Set as writable in order for us to load the page */
+	idx = TLB_Replace(faultpage, new_entry->ppageaddr);
+	TLB_WriteDirty(idx, 1);
+	TLB_WriteValid(idx, 1);
+
+	if(is_code_seg){
+		p_offset = faultpage - as->as_code->vbase;
+		result = load_page_od(as->as_code->file, as->as_code->uio, p_offset);
+		if(result){
+			return result;
+		}
+		new_entry->permissions = as->as_code->permissions;
+		/* Reset the TLB entry as the page is read only */
+		TLB_Flush();
+		TLB_WriteDirty(idx, 0);
+		TLB_WriteValid(idx, 1);
+	}
+	else if(is_data_seg){
+		p_offset = faultpage - as->as_data->vbase;
+		result = load_page_od(as->as_data->file, as->as_data->uio, p_offset);
+		if(result){
+			return result;
+		}
+		new_entry->permissions = as->as_data->permissions;		
+	}
+	return 0;	
 }
 
 

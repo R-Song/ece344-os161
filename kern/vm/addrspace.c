@@ -90,28 +90,6 @@ as_create(void)
 		return NULL;
 	}
 
-	// if(LOAD_ON_DEMAND_ENABLE){
-	// 	as->as_code->file = (struct vnode *)kmalloc(sizeof(struct vnode));
-	// 	if(as->as_code->file == NULL) {
-	// 		kfree(as->as_code);
-	// 		kfree(as->as_data);
-	// 		pt_destroy(as->as_pagetable);
-	// 		kfree(as);
-	// 		return NULL;
-	// 	}
-
-	// 	as->as_data->file = (struct vnode *)kmalloc(sizeof(struct vnode));
-	// 	if(as->as_data->file == NULL) {
-	// 		kfree(as->as_code->file);
-	// 		kfree(as->as_code);
-	// 		kfree(as->as_data);
-	// 		pt_destroy(as->as_pagetable);
-	// 		kfree(as);
-	// 		return NULL;
-	// 	}
-	// }
-
-
 	/* Attempt to get an available asid. If possible. */
 	if(TLB_ASID_ENABLE) {
 		P(as_bitmap_mutex);
@@ -169,11 +147,7 @@ as_destroy(struct addrspace *as)
 		}
 		V(as_bitmap_mutex);
 	}
-	// if(LOAD_ON_DEMAND_ENABLE){
-	// 	kfree(as->as_code->file);
-	// 	kfree(as->as_data->file);
-	// }
-	/* Destroy the regions, pagetable, and as */
+
 	kfree(as->as_code);
 	kfree(as->as_data);
 	pt_destroy(as->as_pagetable);
@@ -222,10 +196,14 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	new->as_code->vbase = old->as_code->vbase;
 	new->as_code->npages = old->as_code->npages;
 	new->as_code->permissions = old->as_code->permissions;
+	new->as_code->file = old->as_code->file;
+	new->as_code->uio = old->as_code->uio;
 
 	new->as_data->vbase = old->as_data->vbase;
 	new->as_data->npages = old->as_data->npages;
 	new->as_data->permissions = old->as_data->permissions;
+	new->as_data->file = old->as_data->file;
+	new->as_data->uio = old->as_data->uio;
 
 	new->as_heapstart = old->as_heapstart;
 	new->as_heapend = old->as_heapend;
@@ -259,6 +237,9 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 			/* This is all we have to do. Let vm_fault do the work */
 			old_entry->num_sharers += 1;
 		}
+
+		/* We have to shoot down all pages to make sure that we can catch those write on readonly faults! */
+		TLB_Flush();
 	}
 	else {
 
@@ -529,8 +510,8 @@ as_activate(struct addrspace *as)
 	/* This area is critical as we are handling tlb as well as writing to curaddrspace globals */
 	spl = splhigh();
 
-	/* Change the uio space to that of the new addrspace*/
-	if(LOAD_ON_DEMAND_ENABLE){
+	/* set the uio */
+	if(LOAD_ON_DEMAND_ENABLE) {
 		(as->as_code->uio).uio_space = curthread->t_vmspace;
 		(as->as_data->uio).uio_space = curthread->t_vmspace;
 	}
@@ -611,8 +592,6 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 		as->as_code->vbase = vaddr;
 		as->as_code->npages = npages;
 		as->as_code->permissions = set_permissions(readable, writeable, executable);
-		//vfs_open(as->as_code->file);
-		//vnode_incref(as->as_code->file);
 		return 0;		
 	}
 
@@ -620,8 +599,6 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 		as->as_data->vbase = vaddr;
 		as->as_data->npages = npages;
 		as->as_data->permissions = set_permissions(readable, writeable, executable);
-		//vfs_open(as->as_code->file);
-		//vnode_incref(as->as_data->file);
 		return 0;		
 	}
 

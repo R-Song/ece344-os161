@@ -486,14 +486,6 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 		splx(spl);
 		return EINVAL;	
 	} 
-	
-	// /* Putting a cap on the amount we can alloc passes the tester... */
-	// if(amount > PAGE_SIZE*500) {
-	// 	*retval = -1;
-	// 	lock_release(swap_lock);
-	// 	splx(spl);
-	// 	return ENOMEM;	
-	// }
 
 	/* Check if we should be allocating or freeing memory */
 	if(amount == 0) 

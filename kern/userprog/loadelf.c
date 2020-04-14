@@ -86,53 +86,6 @@ load_segment(struct vnode *v, off_t offset, vaddr_t vaddr,
 	return result;
 }
 
-static 
-int 
-load_segment_od(struct vnode *v, off_t offset, vaddr_t vaddr, 
-	     				size_t memsize, size_t filesize,
-	    				int is_executable)
-{
-	struct uio u;
-
-	if (filesize > memsize) {
-		kprintf("ELF: warning: segment filesize > segment memsize\n");
-		filesize = memsize;
-	}
-
-	DEBUG(DB_EXEC, "ELF: Loading %lu bytes to 0x%lx\n", 
-	      (unsigned long) filesize, (unsigned long) vaddr);
-
-	u.uio_iovec.iov_ubase = (userptr_t)vaddr;
-	u.uio_iovec.iov_len = memsize;   // length of the memory space
-	u.uio_resid = filesize;          // amount to actually read
-	u.uio_offset = offset;
-	u.uio_segflg = is_executable ? UIO_USERISPACE : UIO_USERSPACE;
-	u.uio_rw = UIO_READ;
-	u.uio_space = curthread->t_vmspace;
-
-	/* Check whether we are working with as_code or as_data segment */
-	int is_code_seg = is_vaddrcode(curthread->t_vmspace, vaddr);
-	int is_data_seg = is_vaddrdata(curthread->t_vmspace, vaddr);
-	
-	/* the addrspace resides in the code region/segment */
-	if(is_code_seg){
-		curthread->t_vmspace->as_code->file = v;
-		curthread->t_vmspace->as_code->uio = u;
-		//kprintf("My little vnode %p \n", curthread->t_vmspace->as_code->file);
-	}
-	else if(is_data_seg) {
-		curthread->t_vmspace->as_data->file = v;
-		curthread->t_vmspace->as_data->uio = u;
-		//kprintf("My little vnode %p \n", curthread->t_vmspace->as_data->file);
-	}
-
-	//else{
-		// can this happen???
-		// panic??? 
-	//}
-	return 0;			
-
-}
 
 /*
  * Load an ELF executable user program into the current address space.
@@ -298,6 +251,10 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 }
 
 
+/******************************************************************************
+ ********* Implementation of Load on Demand ***********************************
+ ******************************************************************************/
+
 int load_elf_od(struct vnode *v, vaddr_t *entrypoint){
 	Elf_Ehdr eh;   /* Executable header */
 	Elf_Phdr ph;   /* "Program header" = segment header */
@@ -395,24 +352,10 @@ int load_elf_od(struct vnode *v, vaddr_t *entrypoint){
 		}
 	
 	}
-
-#if !OPT_DUMBVM
 	/* Now we have to initialize the heap */
 	as_define_heap(curthread->t_vmspace);
-#endif
 
-	/* This does all the page allocations at once! This will have to change when we load on demand... */
-
-	result = as_prepare_load(curthread->t_vmspace);
-	if (result) {
-		return result;
-	}
-
-	/*
-	 * Now actually load each segment.
-	 */
-	/* Since we don't use as_region structs to store info about heap and stack */
-	/* I presume there are only 2 regions/segments - code and data */
+	/* Load the segments on demand */
 	for (i=0; i<eh.e_phnum; i++) {
 		off_t offset = eh.e_phoff + i*eh.e_phentsize;
 		mk_kuio(&ku, &ph, sizeof(ph), offset, UIO_READ);
@@ -453,16 +396,49 @@ int load_elf_od(struct vnode *v, vaddr_t *entrypoint){
 	}
 
 	*entrypoint = eh.e_entry;
-	//kprintf("Finished loading\n");
-
-#if !OPT_DUMBVM
-	//pt_dump(curthread->t_vmspace->as_pagetable);
-	//region_dump(curthread->t_vmspace);
-#endif
-	//TLB_Stat();
-	//region_dump(curthread->t_vmspace);
 
 	return 0;
+}
+
+
+int load_segment_od(struct vnode *v, off_t offset, vaddr_t vaddr, 
+	     				size_t memsize, size_t filesize,
+	    				int is_executable)
+{
+	struct uio u;
+
+	if (filesize > memsize) {
+		kprintf("ELF: warning: segment filesize > segment memsize\n");
+		filesize = memsize;
+	}
+
+	DEBUG(DB_EXEC, "ELF: Loading %lu bytes to 0x%lx\n", 
+	      (unsigned long) filesize, (unsigned long) vaddr);
+
+	u.uio_iovec.iov_ubase = (userptr_t)vaddr;
+	u.uio_iovec.iov_len = memsize;   // length of the memory space
+	u.uio_resid = filesize;          // amount to actually read
+	u.uio_offset = offset;
+	u.uio_segflg = is_executable ? UIO_USERISPACE : UIO_USERSPACE;
+	u.uio_rw = UIO_READ;
+	u.uio_space = curthread->t_vmspace;
+
+	/* Check whether we are working with as_code or as_data segment */
+	int is_code_seg = is_vaddrcode(curthread->t_vmspace, vaddr);
+	int is_data_seg = is_vaddrdata(curthread->t_vmspace, vaddr);
+	
+	/* the addrspace resides in the code region/segment */
+	if(is_code_seg){
+		curthread->t_vmspace->as_code->file = v;
+		curthread->t_vmspace->as_code->uio = u;
+	}
+	else if(is_data_seg) {
+		curthread->t_vmspace->as_data->file = v;
+		curthread->t_vmspace->as_data->uio = u;
+	}
+
+	return 0;			
+
 }
 
 

@@ -21,6 +21,9 @@
 #include <pagetable.h>
 #include <vm_features.h>
 
+/* Lock to synchronize the process table */
+static struct lock *process_lock;
+
 
 /********************************************************************************************/
 /* Functions that deal with process lookup table, handling PID allocation and reclaimation, */
@@ -40,6 +43,11 @@ extern struct array *zombies;
 /* Initialize process table */
 void proc_bootstrap() 
 {
+    process_lock = lock_create("Process Lock");
+    if(process_lock == NULL) {
+        panic("Could not create process lock \n");
+    }
+
     (struct thread **)process_table = (struct thread **)kmalloc(MAX_PID*sizeof(struct thread *));
     if(process_table == NULL) {
         panic("Process bootstrap out of memory!");
@@ -59,6 +67,7 @@ void proc_bootstrap()
  */
 int proc_addentry(struct thread *thread, pid_t *retval)
 {   
+    assert(curspl>0);
     pid_t index;
     for( index=1; index<MAX_PID; index++ ) {
         if(process_table[index] == NULL) {
@@ -74,6 +83,7 @@ int proc_addentry(struct thread *thread, pid_t *retval)
 /* Returns 1 if there is an available PID, 0 otherwise */
 int proc_pid_avail()
 {   
+    assert(curspl>0);
     pid_t index;
     for( index=1; index<MAX_PID; index++ ) {
         if(process_table[index] == NULL) {
@@ -87,6 +97,7 @@ int proc_pid_avail()
 /* Delete an entry from the process table */
 void proc_deleteentry(pid_t pid)
 {
+    assert(curspl>0);
     process_table[pid] = NULL;
 }
 
@@ -97,13 +108,12 @@ void proc_deleteentry(pid_t pid)
  */
 int proc_init(struct thread *child_thread) {
 
-    int spl = splhigh();
+    assert(curspl>0);
 
     /* pid allocation */
     pid_t child_pid;
     int err = proc_addentry(child_thread, &child_pid);
     if(err) {
-        splx(spl);
         return err;
     }
 
@@ -124,11 +134,9 @@ int proc_init(struct thread *child_thread) {
     child_thread->t_exitsem = sem_create("sem for exit...", 0);
     if(child_thread->t_exitsem == NULL) {
         proc_deleteentry(child_pid);
-        splx(spl);
         return ENOMEM;
     }
 
-    splx(spl);
     return 0;
 }
 
@@ -211,6 +219,7 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
 {
     int spl;
     int err = 0;
+    lock_acquire(process_lock);
 
     /* Create trap frame for the child and thread object */
     struct trapframe *child_tf = (struct trapframe *)kmalloc(sizeof(struct trapframe));
@@ -247,6 +256,7 @@ int proc_fork(struct trapframe *tf, pid_t *ret_val)
     }  
     child_thread->t_waitflag = 1;
     
+    lock_release(process_lock);
     splx(spl);
 
     /* return */
@@ -270,9 +280,13 @@ int proc_waitpid(pid_t pid, int *exitcode)
 {
     /* Turn off interrupts */
     int spl = splhigh();
+
+    lock_acquire(process_lock);
+
     if( pid >= MAX_PID || pid <= 0 ){
         *exitcode = 0;
         splx(spl);
+        lock_release(process_lock);
         return EINVAL;
     }
     
@@ -280,6 +294,7 @@ int proc_waitpid(pid_t pid, int *exitcode)
     if ( current == NULL ){
         *exitcode = 0;
         splx(spl);
+        lock_release(process_lock);
         return EINVAL;
     }
     assert(current->t_pid == pid);
@@ -288,6 +303,7 @@ int proc_waitpid(pid_t pid, int *exitcode)
     if( current->t_ppid != curthread->t_pid){
         *exitcode = 0;
         splx(spl);
+        lock_release(process_lock);
         return EINVAL;
     }
 
@@ -295,14 +311,18 @@ int proc_waitpid(pid_t pid, int *exitcode)
         *exitcode = current->t_exitcode;
         proc_reap(pid);
         splx(spl);
+        lock_release(process_lock);
         return 0;
     }
     else {
         /* Wait on the lock until the child terminates its execution */ 
+        lock_release(process_lock);
         P(current->t_exitsem);
         /* Call process and thread reaping function */
+        lock_acquire(process_lock);
         *exitcode = current->t_exitcode;
         proc_reap(pid);
+        lock_release(process_lock);
         splx(spl);
         return 0;
     }
@@ -321,6 +341,7 @@ void proc_exit(int exitcode)
 {
     /* Disable interrupts, no interruptions for exiting! */
     int spl = splhigh();
+    lock_acquire(process_lock);
 
     curthread->t_exitcode = exitcode;
     curthread->t_exitflag = 1;
@@ -340,6 +361,7 @@ void proc_exit(int exitcode)
         }
     }
 
+    lock_release(process_lock);
     splx(spl);
     thread_exit();
 }
@@ -415,9 +437,6 @@ int proc_execv(char *program, int argc, char **argv){
         curthread->t_vmspace = cur_addrspace;
         goto execv_failed;
     }   
-
-    /* Done with the file? */
-    //vfs_close(v);
 
     /* Define the user stack in the address space */
     err = as_define_stack(curthread->t_vmspace, &stackptr);

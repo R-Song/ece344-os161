@@ -4,7 +4,7 @@
 /*
 * Global enable flags for features added in vm functions
 */
-#define LOAD_ON_DEMAND_ENABLE 0
+#define LOAD_ON_DEMAND_ENABLE 1
 
 #define SWAPPING_ENABLE 1
 

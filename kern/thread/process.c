@@ -417,7 +417,7 @@ int proc_execv(char *program, int argc, char **argv){
     }   
 
     /* Done with the file? */
-    vfs_close(v);
+    //vfs_close(v);
 
     /* Define the user stack in the address space */
     err = as_define_stack(curthread->t_vmspace, &stackptr);

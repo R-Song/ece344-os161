@@ -65,7 +65,7 @@ runprogram(char *progname, char **argv, unsigned long size_args)
 	}
 
 	/* Done with the file now. */
-	vfs_close(v);
+	//vfs_close(v);
 
 	/* Define the user stack in the address space */
 	result = as_define_stack(curthread->t_vmspace, &stackptr);

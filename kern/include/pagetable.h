@@ -21,17 +21,35 @@
  * right now just has physical mapping, but will need more fields later...
  ******************************************************************************/
 
+
+/* 
+ * The swap state of page
+ *
+ * NONE:    Page exists nowhere 
+ * PRESENT: Page exists in memory
+ * SWAPPED: Page exists in swap storage only
+ * DIRTY:   Page exists in both swap storage and memory, but are not the same
+ * CLEAN:   Page exists in both swap storage and memory and as identical
+ */
+typedef enum {
+    PTE_NONE,
+    PTE_PRESENT,
+    PTE_SWAPPED,
+    PTE_DIRTY,
+    PTE_CLEAN,
+} swapstate_t;
+
+
 struct pte {
 	paddr_t ppageaddr;              /* Physical address mapping */
     permissions_t permissions;      /* permissions for access */
 
     /* following information is used for demand paging */
-    int is_present;                 /* is this page present in physical memory */
-    int is_swapped;                 /* is this page on the swap disk */
-    //int is_clean;                   /* is the page in memory identitical to the one on disk */
+    swapstate_t swap_state;
     u_int32_t swap_location;        /* swap location on disk */
 
     /* following information is used to implement copy on write */
+    int num_sharers;                /* counts how many threads are sharing this pte. If thsi is 0, pte is not shared */
 };
 
 /* create and destroy a pte */
@@ -126,8 +144,11 @@ struct pte *pt_get(pagetable_t pt, vaddr_t vaddr);
 /* get the next populated vaddr */
 vaddr_t pt_getnext(pagetable_t pt, vaddr_t vaddr);
 
-/* copy a page table */
+/* copy a page table deep */
 int pt_copy(pagetable_t src, pagetable_t dest);
+
+/* copy a page table shallow */
+int pt_copy_shallow(pagetable_t src, pagetable_t dest);
 
 /* remove entry from the page table */
 void pt_remove(pagetable_t pt, vaddr_t vaddr);

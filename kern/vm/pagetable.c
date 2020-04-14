@@ -8,6 +8,8 @@
 #include <kern/errno.h>
 #include <machine/vm.h>
 #include <machine/spl.h>
+#include <vm.h>
+#include <swap.h>
 
 
 /**************************************************
@@ -23,10 +25,9 @@ struct pte *pte_init()
     }
     entry->ppageaddr = 0;
     entry->permissions = set_permissions(0,0,0);
-    entry->is_present = 0;
-    entry->is_swapped = 0;
-    //entry->is_clean = 0;
+    entry->swap_state = PTE_NONE;
     entry->swap_location = 0;
+    entry->num_sharers = 0;
     return entry;
 }
 
@@ -35,10 +36,9 @@ void pte_copy(struct pte *src, struct pte *dest)
 {
     dest->ppageaddr = src->ppageaddr;
     dest->permissions = src->permissions;
-    dest->is_present = src->is_present;
-    dest->is_swapped = src->is_swapped;
-    //dest->is_clean = src->is_clean;
+    dest->swap_state = src->swap_state;
     dest->swap_location = src->swap_location;
+    dest->num_sharers = src->num_sharers;
 }
 
 /* pte_destroy() */
@@ -300,6 +300,58 @@ int pt_copy(pagetable_t src, pagetable_t dest)
     return 0;
 }
 
+/* Have the two page tables share the same pte's */
+int pt_copy_shallow(pagetable_t src, pagetable_t dest)
+{
+    assert(src != NULL && src->pte_array != NULL && dest != NULL);
+    unsigned i;
+
+    int spl = splhigh(); /* Working with two page tables, lets be careful */
+
+    while(1) {
+        dest->first_idx = src->first_idx;
+        assert(dest->pte_array == NULL);
+        dest->pte_array = (struct pte **)kmalloc(PT_PTE_ARRAY_NUM_ENTRIES * sizeof(struct pte *));
+        if(dest->pte_array == NULL) {
+            splx(spl);
+            return ENOMEM;
+        }
+
+        for(i=0; i<PT_PTE_ARRAY_NUM_ENTRIES; i++) {
+            if(src->pte_array[i] != NULL){
+                dest->pte_array[i] = src->pte_array[i];
+            }
+            else {
+                dest->pte_array[i] = NULL;
+            }
+        }
+
+        if(src->next != NULL) {
+            src = src->next;
+
+            assert(dest->next == NULL);
+
+            dest->next = (struct pte_container *)kmalloc(sizeof(struct pte_container));
+            if(dest->next == NULL) {
+                splx(spl);
+                return ENOMEM;
+            }
+            
+            dest->next->first_idx = 0;
+            dest->next->pte_array = NULL;
+            dest->next->next = NULL;
+
+            dest = dest->next;
+        }
+        else {
+            break;
+        }
+    }
+
+    splx(spl);
+    return 0;
+}
+
 
 /* remove entry from the page table */
 void pt_remove(pagetable_t pt, vaddr_t vaddr)
@@ -335,6 +387,7 @@ void pt_destroy(pagetable_t pt)
     struct pte_container *it;
     struct pte_container *head;
     unsigned i;
+    assert( lock_do_i_hold(swap_lock) );
     
     head = pt;
 
@@ -350,9 +403,8 @@ void pt_destroy(pagetable_t pt)
                 for(i=0; i<PT_PTE_ARRAY_NUM_ENTRIES; i++) {
                     if(it->next->pte_array[i] != NULL) {
                         if(it->next->pte_array[i]->ppageaddr != 0) {
-                            free_ppages(it->next->pte_array[i]->ppageaddr);
+                            free_upage(it->next->pte_array[i]);
                         }
-                        pte_destroy(it->next->pte_array[i]);
                     }
                 }
                 kfree(it->next->pte_array);
@@ -369,9 +421,8 @@ void pt_destroy(pagetable_t pt)
                 for(i=0; i<PT_PTE_ARRAY_NUM_ENTRIES; i++) {
                     if(head->pte_array[i] != NULL) {
                         if(head->pte_array[i]->ppageaddr != 0) {
-                            free_ppages(head->pte_array[i]->ppageaddr);
+                            free_upage(head->pte_array[i]);
                         }
-                        pte_destroy(head->pte_array[i]);
                     }
                 }
                 kfree(head->pte_array);

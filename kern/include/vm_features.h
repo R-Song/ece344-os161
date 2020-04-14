@@ -6,7 +6,7 @@
 */
 #define LOAD_ON_DEMAND_ENABLE 0
 
-#define SWAPPING_ENABLE 0
+#define SWAPPING_ENABLE 1
 
 #define TLB_ASID_ENABLE 0
 

@@ -29,6 +29,17 @@
  * 
  */
 
+/* make this lock external... we now put a lock on all operations that may affect the swapping system */
+struct lock;
+
+/* 
+ * So when to use this lock?
+ * This is basically the only structure standing between a lot of synchronization issues
+ * Use this whenever allocating ANYTHING. Basically the states between the pagetable, coremap,
+ * and TLB need to be synchronized... otherwise bad things will happen
+ */
+extern struct lock *swap_lock;
+
 struct pte;
 
 /* 
@@ -44,15 +55,12 @@ int swap_read(u_int32_t swap_location, paddr_t ppage);
 int swap_write(u_int32_t swap_location, paddr_t ppage);
 
 /* 
- * Given a page table entry, write a copy of the page to disk. 
- * In the process, update the page table entry, swap_bitmap, 
- * as well as the coremap
+ * Swap a page out. The page to swap out depends on a certain eviction policy
  */
-int swap_pageout(struct pte *entry);
+int swap_pageout();
 
 /*
- * Given a page table entry, read the contents of the page on 
- * the swap disk into entry->ppageaddr
+ * Given a page table entry, get it back into memory.
  */
 int swap_pagein(struct pte *entry);
 
@@ -64,12 +72,20 @@ void swap_pageevict(struct pte *entry);
 /*
  * Use swapping to free up npages of memory
  * Return the first physical page. Return 0 if no available chain of pages was found
+ * This should only be used when allocating kernel pages
  */
 int swap_createspace(int npages);
 
 /*
+ * Allocate pages on demand.
+ * Reserve a space in swap disk.
+ */
+int swap_allocpage_od(struct pte *entry);
+
+/*
  * Use to free a page from the swap disk
  */
-void swap_freepage(u_int32_t swap_location);
+void swap_diskfree(u_int32_t swap_location);
+int  swap_diskalloc(u_int32_t *swap_location);
 
 #endif /* _SWAP_H_ */

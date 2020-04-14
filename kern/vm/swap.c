@@ -19,6 +19,8 @@
 #include <coremap.h>
 #include <pagetable.h>
 #include <lib.h>
+#include <vm.h>
+#include <kern/errno.h>
 
 
 /* the actual name of the file. Read the man page for more information */
@@ -31,14 +33,13 @@ static struct stat *swap_fstat;
 static struct vnode *swap_vnode;
 
 /* synchronization device to make sure only one thread is swapping at any one time */
-static struct lock *swap_lock;
+struct lock *swap_lock;
 
 /* structure to keep track of each swap location */
 static struct bitmap *swap_bitmap;
 
 /* counter for how many pages are available for swapping */
 static u_int32_t num_swap_pages_avail;
-
 
 /*
  * swap_bootstrap()
@@ -75,6 +76,7 @@ void swap_bootstrap()
     if(swap_bitmap == NULL) {
         panic("Could not create swap bitmap");
     }
+    bitmap_mark(swap_bitmap, 0); /* mark the first index, this one should not be used */
 }
 
 
@@ -122,97 +124,145 @@ int swap_write(u_int32_t swap_location, paddr_t ppage)
     return 0;
 }
 
-/* 
- * For now, the implementation is more simple
- * There is only one copy on disk or memory at any one time. This means that
- * the clean state in the pte and coremap are never used. Will change later
- */
 
-
-/* 
- * Copy the page from memory to disk. Update status of page on coremap 
+/*
+ * swap_pageevict()
+ * 
+ * Eviction is the process of officially removing a page from memory.
+ * After a page it is evicted, its ppageaddr is set to 0, and its swap_state is set to PTE_SWAPPED.
+ * Only clean pages can be evicted! Once evicted, the TLB entry is also shot down, as the translation
+ * is not invalid.
  */
-int swap_pageout(struct pte *entry)
+void swap_pageevict(struct pte *entry)
 {
-    int err = 0;
+    assert(curspl>0);
+    assert(lock_do_i_hold(swap_lock));
 
-    int spl = splhigh();
-    lock_acquire(swap_lock);
-
-    /* list of assertions for sanity check */
-    assert(entry != NULL);
-    assert(entry->is_swapped == 0);
+    assert(entry->swap_state == PTE_CLEAN);
     assert(entry->ppageaddr != 0);
 
-    /* mark the bitmap */
+    /* Free the physical page and change the state of the entry */
+    free_ppages(entry->ppageaddr);
+    entry->ppageaddr = 0;
+    entry->swap_state = PTE_SWAPPED;
+ 
+    TLB_Flush(); /* Shoot down the specific TLB entry later, for now we just flush */
+}
+
+/* 
+ * swap_pageout()
+ * 
+ * Find a appropriate page to swap out. Find a spot in the swap disk and write the contents
+ * of the physical page to the swap disk. Once this is done, the page is clean. We can then
+ * evict this page.
+ * 
+ * Currently the eviction policy used is nMRU
+ * 
+ * Returns 0 on success.
+ */
+int swap_pageout()
+{
+    int err;
     u_int32_t swap_location;
-    err = bitmap_alloc(swap_bitmap, &swap_location);
-    if(err) {
-        goto swap_pageout_done;      /* swap is full! */
+    struct pte *entry_to_swap;
+
+    int spl = splhigh();
+    assert( lock_do_i_hold(swap_lock) );
+    
+    /* We have to find a target to swap out */
+    entry_to_swap = coremap_swap_pageout();
+    if(entry_to_swap == NULL) {
+        splx(spl);
+        return 1;
     }
 
-    /* write to the swap file */
-    err = swap_write(swap_location, entry->ppageaddr);
-    if(err) {
-        bitmap_unmark(swap_bitmap, swap_location);
-        goto swap_pageout_done; 
+    assert(entry_to_swap->swap_state != PTE_SWAPPED);
+    assert(entry_to_swap->ppageaddr != 0);
+
+    switch(entry_to_swap->swap_state) {
+        case PTE_PRESENT:
+            /* we have to allocate a place in swap memory and evict */
+            err = bitmap_alloc(swap_bitmap, &swap_location);
+            if(err) {
+                splx(spl);
+                return err;
+            }
+
+            /* write to this location */
+            err = swap_write(swap_location, entry_to_swap->ppageaddr);
+            if(err) {
+                bitmap_unmark(swap_bitmap, swap_location);
+                splx(spl);
+                return err;
+            }
+
+            entry_to_swap->swap_location = swap_location;
+            entry_to_swap->swap_state = PTE_CLEAN;
+            swap_pageevict(entry_to_swap);
+            break;
+
+        case PTE_DIRTY:
+            /* Dirty means that it already has a page in swap disk */
+            swap_location = entry_to_swap->swap_location;
+
+            err = swap_write(swap_location, entry_to_swap->ppageaddr);
+            if(err) {
+                splx(spl);
+                return err;
+            }
+
+            entry_to_swap->swap_location = swap_location;
+            entry_to_swap->swap_state = PTE_CLEAN;
+            swap_pageevict(entry_to_swap);
+            break;
+        
+        case PTE_CLEAN:
+            swap_pageevict(entry_to_swap);
+            break;
+
+        default:
+            panic("Invalid PTE state");
     }
 
-    /* update the entry */
-    entry->swap_location = swap_location;
-    entry->is_swapped = 1;
-
-swap_pageout_done:
-    lock_release(swap_lock);
     splx(spl);
-    return err;
+    return 0;
 }
 
 
 /*
- * Given a page table entry, read the contents of the page on 
- * the swap disk into entry->ppageaddr.
- * Prior to calling this, there must already be a ppage allocated for this entry
+ * swap_pagein()
+ * 
+ * Bring a specific page back into memory. Do this by first allocating a page. Once we have
+ * a page, we can start writing from the swap disk to the page in memory.
+ * 
  */
 int swap_pagein(struct pte *entry)
 {
     int err = 0;
     int spl = splhigh();
-    lock_acquire(swap_lock);
+    assert(lock_do_i_hold(swap_lock));
 
-    /* assertions for sanity check */
-    assert(entry != NULL);
-    assert(entry->is_swapped == 1);
+    assert(entry->swap_state == PTE_SWAPPED);
+    assert(entry->ppageaddr == 0);
+
+    /* Get a physical page for this entry */
+    alloc_upage(entry);
+    if(entry->ppageaddr == 0) {
+        splx(spl);
+        return ENOMEM;
+    }
     assert(entry->ppageaddr != 0);
-    
+
     err = swap_read(entry->swap_location, entry->ppageaddr);
     if(err) {
-        goto swap_pagein_done;
+        splx(spl);
+        return err;
     }
 
-    bitmap_unmark(swap_bitmap, entry->swap_location);
-    entry->is_swapped = 0;
-    entry->is_present = 1;
-    entry->swap_location = 0;
-
-swap_pagein_done:
-    lock_release(swap_lock);
-    splx(spl);
-    return err;
-}
-
-/*
- * Given a page table entry, evict the page from the coremap
- */
-void swap_pageevict(struct pte *entry)
-{
-    int spl = splhigh();
-
-    free_ppages(entry->ppageaddr);
-    entry->is_present = 0;
-    TLB_Flush(); /* Shoot down the specific TLB entry later, for now we just flush */
+    entry->swap_state = PTE_CLEAN;      /* Just loaded the page, it is clean */
 
     splx(spl);
+    return 0;
 }
 
 /*
@@ -222,31 +272,69 @@ void swap_pageevict(struct pte *entry)
 int swap_createspace(int npages)
 {
     int spl = splhigh();
-    lock_acquire(swap_lock);
+    assert(lock_do_i_hold(swap_lock));
 
     int result;
 
     /* export the job to coremap */
-    result = coremap_swaphelper(npages);
+    result = coremap_swap_createspace(npages);
     if(result) {
-        lock_release(swap_lock);
         splx(spl);
-        return 1;
+        return result;
     }
 
-    TLB_Flush(); /* For now we just flush */
-
-    lock_release(swap_lock);
     splx(spl);
     return 0;
 }
 
 /*
- * Deallocate a page that is swapped
+ * This for when we want to allocate on stack or heap on demand
+ * Basically just reserve a spot in swap disk and bring it in
+ * whenever the user needs it!
  */
-void swap_freepage(u_int32_t swap_location)
+int swap_allocpage_od(struct pte *entry) 
 {
+    assert(lock_do_i_hold(swap_lock));
+    assert(curspl>0);
+
+    int err;
+
+    u_int32_t swap_location;
+
+    err = swap_diskalloc(&swap_location);
+    if(err) {
+        return err;
+    }
+
+    entry->ppageaddr = 0;
+    entry->swap_state = PTE_SWAPPED;
+    entry->swap_location = swap_location;
+
+    return 0;
+}
+
+
+
+/*
+ * Let other files allocate or deallocate swap disk space
+ */
+void swap_diskfree(u_int32_t swap_location)
+{
+    assert( lock_do_i_hold(swap_lock) );
     bitmap_unmark(swap_bitmap, swap_location);
 }
+
+int swap_diskalloc(u_int32_t *swap_location)
+{
+    assert( lock_do_i_hold(swap_lock) );
+    int err;
+    err = bitmap_alloc(swap_bitmap, swap_location);
+    if(err) {
+        return err;      /* swap is full! */
+    }
+    return 0;
+}
+
+
 
 

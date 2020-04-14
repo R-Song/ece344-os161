@@ -24,6 +24,7 @@
 #include <uio.h>
 #include <elf.h>
 #include <vfs.h>
+#include <swap.h>
 
 
 /* current active address space id */
@@ -155,6 +156,8 @@ void
 as_destroy(struct addrspace *as)
 {
 	assert(as != NULL);
+	int spl = splhigh();
+	lock_acquire(swap_lock);
 
 	/* Give up the addrspace id */
 	if(TLB_ASID_ENABLE) {
@@ -173,6 +176,9 @@ as_destroy(struct addrspace *as)
 	kfree(as->as_data);
 	pt_destroy(as->as_pagetable);
 	kfree(as);
+
+	lock_release(swap_lock);
+	splx(spl);
 }
 
 
@@ -180,18 +186,30 @@ as_destroy(struct addrspace *as)
  * as_copy()
  * 
  * Creates an identical copy of an address space.
- * Currently the implementation does not support copy on write. Therefore new pages are given to 
+ * Currently the implementation does not support copy on write.
+ * Implementation gets more complicated when swapping is introduced. Before we copy,
+ * we have to check if the current page is in memory or not. If not, we have to swap our current
+ * page in. If the memory is full, we allocate a swap page instead of an actual page, and call
+ * swap_write() to fill it up. Otherwise we can get a physical page and use memmove
+ * 
+ * For copy on write, we make both page tables share all the same entries. We then monitor the vm_faults
+ * very carefully. If they are read faults, then whatever. If they are write faults, we check if there are people
+ * sharing. If so, we create out own copy, and then decrement the share counter on the pte.
  */ 
 int
 as_copy(struct addrspace *old, struct addrspace **ret)
 {
 	int err;
+	vaddr_t vaddr;
 	int spl = splhigh();
+
+	lock_acquire(swap_lock);
 
 	/* Allocate space for new addrspace */
 	struct addrspace *new;
 	new = as_create();
 	if (new==NULL) {
+		lock_release(swap_lock);
 		splx(spl);
 		return ENOMEM;
 	}
@@ -209,89 +227,179 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	new->as_heapend = old->as_heapend;
 	new->as_stackptr = old->as_stackptr;
 
-	/* 
-	 * Copy entries to the page table
-	 * This is a deep copy, including all the pte entries. So the mappings for each page table
-	 * are identical. This can be used to later implement copy on write
-	 */
-	err = pt_copy(old->as_pagetable, new->as_pagetable);
-	if(err) {
-		as_destroy(new);
-		splx(spl);
-		return ENOMEM;
-	}
 
-	/* Set every single virtual address mapping to 0, this will change when we do copy on write */
-	vaddr_t vaddr = 0;
-	while(1) {
-		/* Should never be a page with vaddr_t 0 */
-		vaddr = pt_getnext(new->as_pagetable, vaddr);
-		if(vaddr==0) {
-			break; /* Been through all the pages */
-		}
-		assert(vaddr < USERTOP); /* Should not ever go over user virtual address space */
-
-		/* Initialize all the pages */
-		struct pte *entry = pt_get(new->as_pagetable, vaddr);
-		entry->ppageaddr = 0;
-		entry->is_present = 0;
-		entry->is_swapped = 0;
-		entry->swap_location = 0;
-	}
-
-	/* 
-	 * Allocate a new physical page for every virtual page in the page table
-	 * This will be deprecated later when we do copy on write!
-	 */
-	vaddr = 0;
-	while(1) {
-		/* Should never be a page with vaddr_t 0 */
-		vaddr = pt_getnext(new->as_pagetable, vaddr);
-		if(vaddr==0) {
-			break; /* Been through all the pages */
-		}
-		assert(vaddr < USERTOP); /* Should not ever go over user virtual address space */
-
-		/* Get PTE from old as and new as */
-		struct pte *old_entry = pt_get(old->as_pagetable, vaddr);
-		struct pte *new_entry = pt_get(new->as_pagetable, vaddr);
-		assert(new_entry->ppageaddr == 0);
-
-		/* Allocate a page */
-		alloc_upage(new_entry);		/* ask for 1 user-page */
-
-		if(new_entry->ppageaddr == 0) {
+	if(COPY_ON_WRITE_ENABLE && SWAPPING_ENABLE) {
+		/* Copy the page table shallow. They share the same page table entries! */
+		err = pt_copy_shallow(old->as_pagetable, new->as_pagetable);
+		if(err) {
 			as_destroy(new);
+			lock_release(swap_lock);
+			splx(spl);
+			return err;
+		}
+
+		vaddr = 0;
+		while(1) {
+			/* Should never be a page with vaddr_t 0 */
+			vaddr = pt_getnext(new->as_pagetable, vaddr);
+			if(vaddr==0) {
+				break; /* Been through all the pages */
+			}
+			assert(vaddr < USERTOP); /* Should not ever go over user virtual address space */
+
+			/* Get PTE from old as and new as */
+			struct pte *old_entry = pt_get(old->as_pagetable, vaddr);
+			struct pte *new_entry = pt_get(new->as_pagetable, vaddr);
+			assert(old_entry == new_entry); /* sanity check that shallow copy worked */
+
+			/* This is all we have to do. Let vm_fault do the work */
+			old_entry->num_sharers += 1;
+		}
+	}
+	else {
+
+		/* 
+		* Copy entries to the page table
+		* This is a deep copy, including all the pte entries. So the mappings for each page table
+		* are identical. This can be used to later implement copy on write
+		*/
+		err = pt_copy(old->as_pagetable, new->as_pagetable);
+		if(err) {
+			as_destroy(new);
+			lock_release(swap_lock);
 			splx(spl);
 			return ENOMEM;
 		}
-		/* Update permissions */
-		if( is_vaddrcode(new, vaddr) )
-			new_entry->permissions = new->as_code->permissions;
-		else if( is_vaddrdata(new, vaddr) )
-			new_entry->permissions = new->as_data->permissions;
-		else if( is_vaddrheap(new, vaddr) )
-			new_entry->permissions = set_permissions(1, 1, 0); /* Heap permissions */
-		else if( is_vaddrstack(new, vaddr) )
-			new_entry->permissions = set_permissions(1, 1, 0); /* Stack permissions */
-		else {
-			panic("Unknown region. Memory is not managed properly.");
-		}
-		new_entry->is_present = 1;
-		new_entry->is_swapped = 0;
-		new_entry->swap_location = 0;
 
-		/*
-		* Copy contents of all pages
-		* We do this by converting all physical pages to kernel addresses, then using memmove()
+		/* Set every single virtual address mapping to 0, this will change when we do copy on write */
+		vaddr = 0;
+		while(1) {
+			/* Should never be a page with vaddr_t 0 */
+			vaddr = pt_getnext(new->as_pagetable, vaddr);
+			if(vaddr==0) {
+				break; /* Been through all the pages */
+			}
+			assert(vaddr < USERTOP); /* Should not ever go over user virtual address space */
+
+			/* Initialize all the pages */
+			struct pte *entry = pt_get(new->as_pagetable, vaddr);
+			entry->ppageaddr = 0;
+			entry->swap_state = PTE_NONE;
+			entry->swap_location = 0;
+		}
+
+		/* 
+		* Allocate a new physical page for every virtual page in the page table
+		* This will be deprecated later when we do copy on write!
 		*/
-		memmove((void *)PADDR_TO_KVADDR(new_entry->ppageaddr),
-				(const void *)PADDR_TO_KVADDR(old_entry->ppageaddr), 
-				PAGE_SIZE);
+		vaddr = 0;
+		while(1) {
+			/* Should never be a page with vaddr_t 0 */
+			vaddr = pt_getnext(new->as_pagetable, vaddr);
+			if(vaddr==0) {
+				break; /* Been through all the pages */
+			}
+			assert(vaddr < USERTOP); /* Should not ever go over user virtual address space */
+
+			/* Get PTE from old as and new as */
+			struct pte *old_entry = pt_get(old->as_pagetable, vaddr);
+			struct pte *new_entry = pt_get(new->as_pagetable, vaddr);
 			
-		assert(old_entry->ppageaddr != new_entry->ppageaddr);
+
+			if(SWAPPING_ENABLE) 
+			{
+				/* If the old page is not present, we have to swap it in */
+				if(old_entry->swap_state == PTE_SWAPPED) {
+					err = swap_pagein(old_entry);
+					if(err) {
+						as_destroy(new);
+						lock_release(swap_lock);
+						splx(spl);
+						return err;
+					}
+				}
+
+				/* Check if we can get a physical page. If we do we use memmove */
+				new_entry->ppageaddr = get_ppages(1, 0, new_entry);
+				if(new_entry->ppageaddr != 0) {
+					/* Move from one physical page to another */
+					memmove((void *)PADDR_TO_KVADDR(new_entry->ppageaddr),
+							(const void *)PADDR_TO_KVADDR(old_entry->ppageaddr), 
+							PAGE_SIZE);
+					new_entry->swap_state = PTE_PRESENT;
+					new_entry->swap_location = 0;
+				}
+				else {
+					/* Allocate swap space, and use swap_write to copy */
+					err = swap_allocpage_od(new_entry);
+					if(err) {
+						as_destroy(new);
+						lock_release(swap_lock);
+						splx(spl);
+						return err;
+					}
+					/* Now copy from old entry to swap file */
+					err = swap_write(new_entry->swap_location, old_entry->ppageaddr);
+					if(err) {
+						as_destroy(new);
+						lock_release(swap_lock);
+						splx(spl);
+						return err;
+					}
+				}
+
+				/* Update permissions */
+				if( is_vaddrcode(new, vaddr) )
+					new_entry->permissions = new->as_code->permissions;
+				else if( is_vaddrdata(new, vaddr) )
+					new_entry->permissions = new->as_data->permissions;
+				else if( is_vaddrheap(new, vaddr) )
+					new_entry->permissions = set_permissions(1, 1, 0); /* Heap permissions */
+				else if( is_vaddrstack(new, vaddr) )
+					new_entry->permissions = set_permissions(1, 1, 0); /* Stack permissions */
+				else {
+					panic("Unknown region. Memory is not managed properly.");
+				}
+			}
+			else
+			{
+				/* Allocate a page */
+				alloc_upage(new_entry);		/* ask for 1 user-page */
+
+				if(new_entry->ppageaddr == 0) {
+					as_destroy(new);
+					splx(spl);
+					return ENOMEM;
+				}
+				/* Update permissions */
+				if( is_vaddrcode(new, vaddr) )
+					new_entry->permissions = new->as_code->permissions;
+				else if( is_vaddrdata(new, vaddr) )
+					new_entry->permissions = new->as_data->permissions;
+				else if( is_vaddrheap(new, vaddr) )
+					new_entry->permissions = set_permissions(1, 1, 0); /* Heap permissions */
+				else if( is_vaddrstack(new, vaddr) )
+					new_entry->permissions = set_permissions(1, 1, 0); /* Stack permissions */
+				else {
+					panic("Unknown region. Memory is not managed properly.");
+				}
+				new_entry->swap_state = PTE_PRESENT;
+				new_entry->swap_location = 0;
+
+				/*
+				* Copy contents of all pages
+				* We do this by converting all physical pages to kernel addresses, then using memmove()
+				*/
+				memmove((void *)PADDR_TO_KVADDR(new_entry->ppageaddr),
+						(const void *)PADDR_TO_KVADDR(old_entry->ppageaddr), 
+						PAGE_SIZE);
+					
+				assert(old_entry->ppageaddr != new_entry->ppageaddr);
+			}
+		}
 	}
 
+	lock_release(swap_lock);
 	*ret = new;
 	splx(spl);
 	return 0;
@@ -333,6 +441,8 @@ as_prepare_load(struct addrspace *as)
 
 		/* Code segment */
 		for(i=0; i<as->as_code->npages; i++) {	
+			lock_acquire(swap_lock);
+
 			entry = pte_init();
 			if(entry == NULL) {
 				splx(spl);
@@ -343,22 +453,26 @@ as_prepare_load(struct addrspace *as)
 			alloc_upage(entry);
 			if(entry->ppageaddr == 0) {
 				pte_destroy(entry);
+				lock_release(swap_lock);
 				splx(spl);
 				return ENOMEM;
 			}
 
 			/* entry->ppageaddr is updated by alloc_upage */
 			entry->permissions = set_permissions(1, 1, 1); /* RWX */
-			entry->is_present = 1;
-			entry->is_swapped = 0;
+			entry->swap_state = PTE_PRESENT;
 			entry->swap_location = 0;
 
 			/* add entry to page table */
 			pt_add(as->as_pagetable, vpageaddr, entry);
+
+			lock_release(swap_lock);
 		}
 
 		/* Data segment */
 		for(i=0; i<as->as_data->npages; i++) {
+			lock_acquire(swap_lock);
+
 			entry = pte_init();
 			if(entry == NULL) {
 				splx(spl);
@@ -375,12 +489,13 @@ as_prepare_load(struct addrspace *as)
 
 			/* entry->ppageaddr is updated by alloc_upage */
 			entry->permissions = set_permissions(1, 1, 1); /* RWX */
-			entry->is_present = 1;
-			entry->is_swapped = 0;
+			entry->swap_state = PTE_PRESENT;
 			entry->swap_location = 0;
 
 			/* add entry to page table */
 			pt_add(as->as_pagetable, vpageaddr, entry);
+
+			lock_release(swap_lock);
 		}
 
 		splx(spl);
@@ -540,9 +655,6 @@ as_complete_load(struct addrspace *as)
 			entry = pt_get(as->as_pagetable, addr);
 			entry->permissions = as->as_data->permissions;
 		}
-
-		/* Flush TLB as all TLB entries are dirty */
-		//TLB_Flush();
 
 		return 0;
 	}

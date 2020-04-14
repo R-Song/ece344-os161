@@ -24,8 +24,20 @@ void vm_bootstrap(void);
 /* Fault handling function called by trap code */
 int vm_fault(int faulttype, vaddr_t faultaddress);
 
-int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int is_pagefault, int is_stack, int is_swapped);
-int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int is_pagefault, int is_stack, int is_swapped);
+/* general fault handlers */
+int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, 
+                    int is_pagefault, int is_stack, int is_swapped, int is_shared);
+
+int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, 
+                    int is_pagefault, int is_stack, int is_swapped, int is_shared);
+
+int vm_readonlyfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, 
+                    int is_pagefault, int is_stack, int is_swapped, int is_shared);
+
+/* specefic fault handlers */
+int vm_stackfault(struct addrspace *as, vaddr_t faultaddress);
+int vm_swapfault(struct pte *faultentry, vaddr_t faultaddress, int faulttype);
+struct pte *vm_copyonwritefault( struct addrspace *as, struct pte *old_faultentry, vaddr_t faultaddress);
 
 /* Allocate/free kernel heap pages (called by kmalloc/kfree) */
 vaddr_t alloc_kpages(int npages);

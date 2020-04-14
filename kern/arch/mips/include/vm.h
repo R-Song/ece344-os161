@@ -51,7 +51,7 @@
  * grows downwards.
  */
 #define USERSTACK       USERTOP
-#define USERSTACKBASE   0x70000000
+#define USERSTACKBASE   0x60000000
 
 /*
  * Interface to the low-level module that looks after the amount of

@@ -36,7 +36,7 @@ int vm_readonlyfault(struct addrspace *as, struct pte *faultentry, vaddr_t fault
 
 /* specefic fault handlers */
 int vm_stackfault(struct addrspace *as, vaddr_t faultaddress);
-int vm_swapfault(struct pte *faultentry, vaddr_t faultaddress, int faulttype);
+int vm_swapfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int faulttype);
 int vm_copyonwritefault( struct addrspace *as, struct pte *old_faultentry, vaddr_t faultaddress);
 int vm_lodfault(struct addrspace *as, vaddr_t faultaddress, int faulttype);
 

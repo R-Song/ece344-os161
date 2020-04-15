@@ -245,7 +245,6 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		!is_vaddrheap(as, faultpage) && 
 		!is_vaddrstack(as, faultpage) && 
 		!is_stack ) {
-			//kprintf("Page 0x%08x is not in a valid region\n", faultpage);
 			lock_release(swap_lock);
 			splx(spl);
 			return EFAULT;
@@ -334,7 +333,7 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 	}
 	
 	if(!is_pagefault && is_swapped) {
-		return vm_swapfault(faultentry, faultaddress, VM_FAULT_READ);
+		return vm_swapfault(as, faultentry, faultaddress, VM_FAULT_READ);
 	}
 
 	panic("Should not reach here, vm_readfault");
@@ -387,7 +386,7 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 	}
 	
 	if(!is_pagefault && is_swapped) {
-		return vm_swapfault(faultentry, faultaddress, VM_FAULT_WRITE);
+		return vm_swapfault(as, faultentry, faultaddress, VM_FAULT_WRITE);
 	}
 	else {
 		return EFAULT;
@@ -478,9 +477,11 @@ int vm_stackfault(struct addrspace *as, vaddr_t faultaddress)
 
 
 /* Handle a fault that results from reading/writing to a swapped page */
-int vm_swapfault(struct pte *faultentry, vaddr_t faultaddress, int faulttype)
+int vm_swapfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddress, int faulttype)
 {
 	assert(lock_do_i_hold(swap_lock));
+
+	(void) as;
 
 	int err, idx;
 	vaddr_t faultpage = (faultaddress & PAGE_FRAME);
@@ -581,10 +582,12 @@ int vm_copyonwritefault(struct addrspace *as, struct pte *old_faultentry, vaddr_
 	}
 
 	/* shoot down outdated TLB entry and replace with the proper mapping */
-	idx = TLB_FindEntry(old_faultentry->ppageaddr);
-	if(idx >= 0) {
-		TLB_Invalidate(idx);
-	}
+	// idx = TLB_FindEntry(old_faultentry->ppageaddr);
+	// if(idx >= 0) {
+	// 	TLB_Invalidate(idx);
+	// }
+
+	TLB_Flush();
 
 	idx = TLB_Replace(faultpage, new_faultentry->ppageaddr);
 	TLB_WriteDirty(idx, 1);

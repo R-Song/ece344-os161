@@ -142,13 +142,13 @@ void swap_pageevict(struct pte *entry)
     assert(entry->swap_state == PTE_CLEAN);
     assert(entry->ppageaddr != 0);
 
-    //TLB_Flush();
+    TLB_Flush();
 
     /* Shoot down the specific TLB entry */
-    int idx = TLB_FindEntry(entry->ppageaddr);
-    if(idx >= 0) {
-        TLB_Invalidate(idx);
-    }
+    // int idx = TLB_FindEntry(entry->ppageaddr);
+    // if(idx >= 0) {
+    //     TLB_Invalidate(idx);
+    // }
 
     /* Free the physical page and change the state of the entry */
     free_ppages(entry->ppageaddr);

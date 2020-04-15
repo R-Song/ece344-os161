@@ -50,6 +50,8 @@ void TLB_Flush();
 
 /* TLB Replace. Implements our own replacement policy. Returns the index that we wrote to */
 int TLB_Replace(u_int32_t entryhi, u_int32_t entrylo);
+int TLB_FindEntry(u_int32_t entrylo);
+void TLB_Invalidate(int idx);
 
 void TLB_Stat();
 

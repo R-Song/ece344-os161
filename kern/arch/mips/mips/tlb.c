@@ -151,6 +151,33 @@ int TLB_Replace(u_int32_t entryhi, u_int32_t entrylo)
     return idx;
 }
 
+int TLB_FindEntry(u_int32_t entrylo)
+{
+    int spl = splhigh();
+
+    int idx;
+    u_int32_t ehi, elo;
+
+    for(idx=0; idx<NUM_TLB; idx++) {
+        TLB_Read(&ehi, &elo, idx);
+		if(entrylo == (elo & TLBLO_PPAGE) ) {
+            return idx;
+        }
+    }
+    return -1;
+
+    splx(spl);
+}
+
+void TLB_Invalidate(int idx)
+{
+    int spl = splhigh();
+
+	TLB_Write(TLBHI_INVALID(idx), TLBLO_INVALID(), idx);
+    
+    splx(spl);
+}
+
 
 /*
  * TLB_Stat()

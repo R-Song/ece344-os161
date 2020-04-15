@@ -220,29 +220,30 @@ void coremap_stat()
 
 /*
  * coremap_swap_pageout()
- * Finds a good page for swap_pageout to evict. Returns the page table entry.
+ * Implements random page table eviction...
  */
 struct pte *coremap_swap_pageout() {
     assert(curspl>0);
     int page_it;
+    int start_page = ( random() % (last_avail_ppage - first_avail_ppage) ) + first_avail_ppage;
 
-    /* loop through and find a user page to replace */
-    for(page_it=prev_swap_page+1; page_it<last_avail_ppage; page_it++){
-        if(coremap[page_it].state == S_USER) {
-            assert(coremap[page_it].pt_entry != NULL);
-            prev_swap_page = page_it;
-            return coremap[page_it].pt_entry;
-        }
-    }
-
-    for(page_it=first_avail_ppage; page_it<prev_swap_page+1; page_it++){
+    for(page_it=start_page; page_it<last_avail_ppage; page_it++){
         if(coremap[page_it].state == S_USER && page_it != prev_swap_page) {
             assert(coremap[page_it].pt_entry != NULL);
             prev_swap_page = page_it;
             return coremap[page_it].pt_entry;
         }
     }
-    return NULL;
+
+    for(page_it=first_avail_ppage; page_it<start_page; page_it++){
+        if(coremap[page_it].state == S_USER && page_it != prev_swap_page) {
+            assert(coremap[page_it].pt_entry != NULL);
+            prev_swap_page = page_it;
+            return coremap[page_it].pt_entry;
+        }
+    }
+
+    return 0;
 }
 
 /*

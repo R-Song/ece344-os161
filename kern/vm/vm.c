@@ -251,6 +251,13 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 			return EFAULT;
 		}
 
+	/* If page is clean, we change the state to dirty as neccessary */
+	if(faultentry != NULL) {
+		if(faultentry->swap_state == PTE_CLEAN && faulttype != VM_FAULT_READ) {
+			faultentry->swap_state = PTE_DIRTY;
+		}
+	}
+
 	/*
 	 * Handle the faults
 	 */
@@ -349,11 +356,7 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 	/* Check if this page is shared. If so we need to copy the page */
 	if(is_shared) {
 		/* after this, the faultentry is no longer the old one! */
-		faultentry = vm_copyonwritefault(as, faultentry, faultaddress);
-		if(faultentry == NULL) {
-			return ENOMEM;
-		}
-		return 0;
+		return vm_copyonwritefault(as, faultentry, faultaddress);
 	}
 
 	/* Check to see if page fault is to the stack. If so we should allocate a page for the stack. */
@@ -407,11 +410,7 @@ int vm_readonlyfault(struct addrspace *as, struct pte *faultentry, vaddr_t fault
 		return EFAULT;
 	}
 
-	faultentry = vm_copyonwritefault(as, faultentry, faultaddress);
-	if(faultentry == NULL) {
-		return ENOMEM;
-	}
-	return 0;
+	return vm_copyonwritefault(as, faultentry, faultaddress);
 }
 
 
@@ -502,12 +501,18 @@ int vm_swapfault(struct pte *faultentry, vaddr_t faultaddress, int faulttype)
 	assert(faultentry->swap_state == PTE_CLEAN ); /* Just loaded the page, it should be clean */
 	assert(faultentry->ppageaddr != 0);
 
-	faultentry->swap_state = PTE_DIRTY; 	/* For now we assume that its just dirty. Later we will use dirty bit and readonly fault. */
-
-	/* update TLB */
 	idx = TLB_Replace(faultpage, faultentry->ppageaddr);
-	TLB_WriteDirty(idx, 1);
-	TLB_WriteValid(idx, 1);
+
+	if( !is_writeable(faultentry->permissions) ) {
+		faultentry->swap_state = PTE_CLEAN;
+		TLB_WriteDirty(idx, 0);
+		TLB_WriteValid(idx, 1);
+	}
+	else {
+		faultentry->swap_state = PTE_DIRTY;
+		TLB_WriteDirty(idx, 1);
+		TLB_WriteValid(idx, 1);
+	}
 
 	return 0;
 }
@@ -519,7 +524,7 @@ int vm_swapfault(struct pte *faultentry, vaddr_t faultaddress, int faulttype)
  * This new PTE is then inserted into the current page table. The share counter of the previous
  * pte is then decremented. The current pte will have a counter of 0.
  */
-struct pte *vm_copyonwritefault(struct addrspace *as, struct pte *old_faultentry, vaddr_t faultaddress) 
+int vm_copyonwritefault(struct addrspace *as, struct pte *old_faultentry, vaddr_t faultaddress) 
 {
 	assert(lock_do_i_hold(swap_lock));
 
@@ -528,70 +533,64 @@ struct pte *vm_copyonwritefault(struct addrspace *as, struct pte *old_faultentry
 
 	/* Set up the new entry */
 	struct pte *new_faultentry = pte_init();
+	if(new_faultentry == NULL) {
+		return ENOMEM;
+	}
 	new_faultentry->ppageaddr = 0;
 	new_faultentry->permissions = old_faultentry->permissions;
 	new_faultentry->num_sharers = 0;
 	new_faultentry->swap_location = 0;
 	new_faultentry->swap_state = PTE_NONE;
 
-	/* Swap in old page if not present*/
+	/* Get a physical page for the new entry. */
+	alloc_upage(new_faultentry);
+	if(new_faultentry->ppageaddr == 0) {
+		pte_destroy(new_faultentry);
+		return ENOMEM;
+	}
+	
+	/* Now copy the contents from old_entry to new_entry */
 	if(old_faultentry->swap_state == PTE_SWAPPED) {
-		err = swap_pagein(old_faultentry);
+		/* swap read the old entry in the new entry */
+		err = swap_read(old_faultentry->swap_location, new_faultentry->ppageaddr);
 		if(err) {
-			return NULL;
+			pte_destroy(new_faultentry);
+			return err;
 		}
 	}
-
-	/* Copy old page into either an available physical page OR a swap disk page */
-	new_faultentry->ppageaddr = get_ppages(1, 0, new_faultentry);
-	if(new_faultentry->ppageaddr != 0) {
-		/* Move from one physical page to another */
+	else {
+		/* use memmove to copy */
 		memmove((void *)PADDR_TO_KVADDR(new_faultentry->ppageaddr),
 				(const void *)PADDR_TO_KVADDR(old_faultentry->ppageaddr), 
 				PAGE_SIZE);
-		new_faultentry->swap_state = PTE_PRESENT;
-		new_faultentry->swap_location = 0;
-	}
-	else {
-		/* Allocate swap space, and use swap_write to copy */
-		err = swap_allocpage_od(new_faultentry);
-		if(err) {
-			return NULL;
-		}
-		/* Now copy from old entry to swap file */
-		err = swap_write(new_faultentry->swap_location, old_faultentry->ppageaddr);
-		if(err) {
-			return NULL;
-		}
 	}
 
-	/* Update entries properly */
+	/* Update the new faultentry */
+	new_faultentry->swap_state = PTE_PRESENT;
+	new_faultentry->swap_location = 0;
+
+	/* Update the old faultentry */
 	old_faultentry->num_sharers -= 1; /* now one less sharer */
 
 	/* finally update the current page table, to swap out the old entry with the new one */
 	pt_remove(as->as_pagetable, faultpage);
 	err = pt_add(as->as_pagetable, faultpage, new_faultentry);
 	if(err) {
-		return NULL;
+		pte_destroy(new_faultentry);
+		return err;
 	}
 
-	/* now finally, we have to make sure the new page is in memory */
-	if(new_faultentry->swap_state == PTE_SWAPPED) {
-		err = swap_pagein(new_faultentry);
-		if(err) {
-			return NULL;
-		}
-		new_faultentry->swap_state = PTE_DIRTY; 	/* For now we assume that its just dirty. Later we will use dirty bit and readonly fault. */
+	/* shoot down outdated TLB entry and replace with the proper mapping */
+	idx = TLB_FindEntry(old_faultentry->ppageaddr);
+	if(idx >= 0) {
+		TLB_Invalidate(idx);
 	}
-
-	/* update TLB */
-	TLB_Flush(); // avoid duplicate tlb entries
 
 	idx = TLB_Replace(faultpage, new_faultentry->ppageaddr);
 	TLB_WriteDirty(idx, 1);
 	TLB_WriteValid(idx, 1);
 
-	return new_faultentry;
+	return 0;
 }
 
 
@@ -649,10 +648,8 @@ int vm_lodfault(struct addrspace *as, vaddr_t faultaddress, int faulttype)
 			return result;
 		}
 		new_entry->permissions = as->as_code->permissions;
-		/* Reset the TLB entry as the page is read only */
-		TLB_Flush();
+		/* Set TLB to read only */
 		TLB_WriteDirty(idx, 0);
-		TLB_WriteValid(idx, 1);
 	}
 	else if(is_data_seg){
 		p_offset = faultpage - as->as_data->vbase;

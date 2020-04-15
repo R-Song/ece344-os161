@@ -88,4 +88,5 @@ int swap_allocpage_od(struct pte *entry);
 void swap_diskfree(u_int32_t swap_location);
 int  swap_diskalloc(u_int32_t *swap_location);
 
+
 #endif /* _SWAP_H_ */

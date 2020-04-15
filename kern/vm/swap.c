@@ -20,6 +20,7 @@
 #include <pagetable.h>
 #include <lib.h>
 #include <vm.h>
+#include <thread.h>
 #include <kern/errno.h>
 
 
@@ -141,12 +142,18 @@ void swap_pageevict(struct pte *entry)
     assert(entry->swap_state == PTE_CLEAN);
     assert(entry->ppageaddr != 0);
 
+    //TLB_Flush();
+
+    /* Shoot down the specific TLB entry */
+    int idx = TLB_FindEntry(entry->ppageaddr);
+    if(idx >= 0) {
+        TLB_Invalidate(idx);
+    }
+
     /* Free the physical page and change the state of the entry */
     free_ppages(entry->ppageaddr);
     entry->ppageaddr = 0;
     entry->swap_state = PTE_SWAPPED;
- 
-    TLB_Flush(); /* Shoot down the specific TLB entry later, for now we just flush */
 }
 
 /* 
@@ -314,7 +321,6 @@ int swap_allocpage_od(struct pte *entry)
 }
 
 
-
 /*
  * Let other files allocate or deallocate swap disk space
  */
@@ -334,7 +340,4 @@ int swap_diskalloc(u_int32_t *swap_location)
     }
     return 0;
 }
-
-
-
 

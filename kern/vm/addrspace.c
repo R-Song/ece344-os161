@@ -177,7 +177,7 @@ as_destroy(struct addrspace *as)
 int
 as_copy(struct addrspace *old, struct addrspace **ret)
 {
-	int err;
+	int err; int idx;
 	vaddr_t vaddr;
 	int spl = splhigh();
 
@@ -236,10 +236,19 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 
 			/* This is all we have to do. Let vm_fault do the work */
 			old_entry->num_sharers += 1;
+
+			/* Lets update TLB entries here properly, all current TLB entries should be dirty=0 so we can catch readonly faults */
+			if(old_entry->swap_state != PTE_SWAPPED) {
+				assert(old_entry->swap_state != PTE_NONE);
+				idx = TLB_FindEntry(old_entry->ppageaddr);
+				if(idx >= 0) {
+					TLB_WriteDirty(idx, 0);
+				}
+			}
 		}
 
 		/* We have to shoot down all pages to make sure that we can catch those write on readonly faults! */
-		TLB_Flush();
+		//TLB_Flush();
 	}
 	else {
 

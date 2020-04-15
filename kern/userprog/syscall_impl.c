@@ -220,6 +220,7 @@ int sys___time(time_t *seconds, unsigned long *nanoseconds, time_t *retval)
 int sys_fork(struct trapframe *tf, pid_t *ret_val) 
 {
 	int spl = splhigh();
+	lock_acquire(swap_lock);
 
 	int child_pid;	
 	
@@ -230,6 +231,7 @@ int sys_fork(struct trapframe *tf, pid_t *ret_val)
 	}
 	*ret_val = child_pid;
 
+	lock_release(swap_lock);
 	splx(spl);
 	return 0;
 }

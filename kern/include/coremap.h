@@ -48,6 +48,9 @@ struct coremap_entry {
 
     /* age table entry associated with this coremap entry. NULL if this is a kernel entry */
     struct pte *pt_entry;
+
+    /* referenced bit used for lru clock page evict algo */
+    int referenced;
 };
 
 

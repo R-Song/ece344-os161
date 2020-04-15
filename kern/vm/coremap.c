@@ -22,6 +22,11 @@ static int last_avail_ppage = 0;
 /* for page replacement */
 static int prev_swap_page = 0;
 
+/* stores the index of the coremap entry the clock hand points at */
+int clock_hand;
+/* for now, the first time I enter the page evict func I set the clock_hand to the first user entry I find*/
+int first_page_evict = 0;
+
 /*
  * coremap_bootstrap()
  * 
@@ -57,6 +62,7 @@ void coremap_bootstrap()
         coremap[i].state = S_KERN; /* This memory is fixed */
         coremap[i].num_pages_allocated = 1;
         coremap[i].pt_entry = NULL;
+        coremap[i].referenced = 1;
     }
 
     /* Initialize the rest of the coremap */
@@ -64,6 +70,7 @@ void coremap_bootstrap()
         coremap[i].state = S_FREE; /* This memory is free */
         coremap[i].num_pages_allocated = 1;
         coremap[i].pt_entry = NULL;
+        coremap[i].referenced = 1;
     }
 
     /* save first and last pages */
@@ -174,6 +181,7 @@ void free_ppages(paddr_t paddr)
         coremap[i].state = S_FREE;
         coremap[i].num_pages_allocated = 0;
         coremap[i].pt_entry = NULL;
+        coremap[i].referenced = 1;
     }
     
     splx(spl);
@@ -225,6 +233,8 @@ void coremap_stat()
 struct pte *coremap_swap_pageout() {
     assert(curspl>0);
     int page_it;
+
+    #if !LRU_CLOCK
     int start_page = ( random() % (last_avail_ppage - first_avail_ppage) ) + first_avail_ppage;
 
     for(page_it=start_page; page_it<last_avail_ppage; page_it++){
@@ -244,6 +254,54 @@ struct pte *coremap_swap_pageout() {
     }
 
     return 0;
+
+    #endif
+
+    /* first page evicted - first time we set the hand iterator to point at a coremap entry */
+    if(!first_page_evict){
+        /* point at first entry in coremap if R 0 */
+        int page_it;
+        for( page_it = first_avail_ppage; page_it < last_avail_ppage; page_it++ ){
+            if(coremap[page_it].state == S_USER) {       
+               assert(coremap[page_it].pt_entry != NULL);
+                if((page_it + 1) == last_avail_ppage){
+                    /* found no proper page to evict */
+                    return NULL;
+                }
+                else {
+                    clock_hand = page_it;
+                }
+               coremap[page_it].referenced = 0;
+               first_page_evict++;
+               return coremap[page_it].pt_entry;
+            }
+        }  
+    }
+
+    int temp;
+    find_user:
+        while(coremap[clock_hand].referenced){
+            /* clear reference bit and increment clock hand until a page is replaced*/
+            coremap[clock_hand].referenced = 0;
+            if((clock_hand + 1) == last_avail_ppage){
+                clock_hand = first_avail_ppage;
+                continue;
+            }
+            clock_hand += 1;
+        }
+
+        if(coremap[clock_hand].state != S_USER){
+            temp = clock_hand;
+            clock_hand = ((temp + 1) == last_avail_ppage) ? first_avail_ppage : (temp += 1);
+            goto find_user;
+        }
+
+    int old_clock_hand = clock_hand;
+
+    temp = clock_hand;
+    clock_hand = ((temp + 1) == last_avail_ppage) ? first_avail_ppage : (temp += 1);
+
+    return coremap[old_clock_hand].pt_entry;
 }
 
 /*

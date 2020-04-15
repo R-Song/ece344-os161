@@ -12,4 +12,6 @@
 
 #define TLB_ASID_ENABLE 0
 
+#define LRU_CLOCK 1
+
 #endif /* _VM_FEATURES_H_ */

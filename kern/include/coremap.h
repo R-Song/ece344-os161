@@ -77,4 +77,6 @@ void    coremap_stat();
 struct pte *coremap_swap_pageout();
 int         coremap_swap_createspace(int npages);
 
+void coremap_lruclock_update(paddr_t ppageaddr);
+
 #endif /* _COREMAP_H_ */

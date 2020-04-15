@@ -277,6 +277,10 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 			retval = EINVAL;
 	}
 
+	if(retval != 0) {
+		kprintf("Something is wrong in vm_fault\n");
+	}
+
 	lock_release(swap_lock);
 	splx(spl);
 	return retval;
@@ -324,6 +328,11 @@ int vm_readfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 				TLB_WriteDirty(idx, 0);
 			}
 			TLB_WriteValid(idx, 1);
+
+			if(LRU_CLOCK) {
+				coremap_lruclock_update(faultentry->ppageaddr);
+			}
+
 			return 0;
 		}
 		else {
@@ -378,6 +387,11 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 			idx = TLB_Replace(faultpage, faultentry->ppageaddr);
 			TLB_WriteDirty(idx, 1);
 			TLB_WriteValid(idx, 1);
+
+			if(LRU_CLOCK) {
+				coremap_lruclock_update(faultentry->ppageaddr);
+			}
+
 			return 0;
 		}
 		else {
@@ -472,6 +486,11 @@ int vm_stackfault(struct addrspace *as, vaddr_t faultaddress)
 	idx = TLB_Replace(faultpage, faultpage_paddr);
 	TLB_WriteDirty(idx, 1);
 	TLB_WriteValid(idx, 1);
+
+	if(LRU_CLOCK) {
+		coremap_lruclock_update(faultpage_paddr);
+	}
+
 	return 0;
 }
 
@@ -503,6 +522,9 @@ int vm_swapfault(struct addrspace *as, struct pte *faultentry, vaddr_t faultaddr
 	assert(faultentry->ppageaddr != 0);
 
 	idx = TLB_Replace(faultpage, faultentry->ppageaddr);
+	if(LRU_CLOCK) {
+		coremap_lruclock_update(faultentry->ppageaddr);
+	}
 
 	if( !is_writeable(faultentry->permissions) ) {
 		faultentry->swap_state = PTE_CLEAN;
@@ -593,6 +615,10 @@ int vm_copyonwritefault(struct addrspace *as, struct pte *old_faultentry, vaddr_
 	TLB_WriteDirty(idx, 1);
 	TLB_WriteValid(idx, 1);
 
+	if(LRU_CLOCK) {
+		coremap_lruclock_update(new_faultentry->ppageaddr);
+	}
+
 	return 0;
 }
 
@@ -643,6 +669,10 @@ int vm_lodfault(struct addrspace *as, vaddr_t faultaddress, int faulttype)
 	idx = TLB_Replace(faultpage, new_entry->ppageaddr);
 	TLB_WriteDirty(idx, 1);
 	TLB_WriteValid(idx, 1);
+
+	if(LRU_CLOCK) {
+		coremap_lruclock_update(new_entry->ppageaddr);
+	}
 
 	if(is_code_seg){
 		p_offset = faultpage - as->as_code->vbase;

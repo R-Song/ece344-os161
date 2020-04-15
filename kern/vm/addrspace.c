@@ -133,7 +133,8 @@ as_create(void)
 void
 as_destroy(struct addrspace *as)
 {
-	assert(as != NULL);
+	assert(as!=NULL);
+
 	int spl = splhigh();
 
 	int lock_held_prior = lock_do_i_hold(swap_lock);
@@ -420,7 +421,6 @@ as_prepare_load(struct addrspace *as)
 		return 0;
 	}
 	else {
-		assert(lock_do_i_hold(swap_lock));
 		/* Do a sanity check */
 		assert(as->as_code->npages != 0);
 		assert(as->as_code->vbase != 0);
@@ -437,7 +437,7 @@ as_prepare_load(struct addrspace *as)
 
 		/* Code segment */
 		for(i=0; i<as->as_code->npages; i++) {	
-			//lock_acquire(swap_lock);
+			lock_acquire(swap_lock);
 
 			entry = pte_init();
 			if(entry == NULL) {
@@ -449,7 +449,7 @@ as_prepare_load(struct addrspace *as)
 			alloc_upage(entry);
 			if(entry->ppageaddr == 0) {
 				pte_destroy(entry);
-				//lock_release(swap_lock);
+				lock_release(swap_lock);
 				splx(spl);
 				return ENOMEM;
 			}
@@ -462,16 +462,16 @@ as_prepare_load(struct addrspace *as)
 			/* add entry to page table */
 			pt_add(as->as_pagetable, vpageaddr, entry);
 
-			//lock_release(swap_lock);
+			lock_release(swap_lock);
 		}
 
 		/* Data segment */
 		for(i=0; i<as->as_data->npages; i++) {
-			//lock_acquire(swap_lock);
+			lock_acquire(swap_lock);
 
 			entry = pte_init();
 			if(entry == NULL) {
-				//lock_release(swap_lock)
+				lock_release(swap_lock);
 				splx(spl);
 				return ENOMEM;
 			}
@@ -480,7 +480,7 @@ as_prepare_load(struct addrspace *as)
 			alloc_upage(entry);
 			if(entry->ppageaddr == 0) {
 				pte_destroy(entry);
-				//lock_release(swap_lock)
+				lock_release(swap_lock);
 				splx(spl);
 				return ENOMEM;
 			}
@@ -493,7 +493,7 @@ as_prepare_load(struct addrspace *as)
 			/* add entry to page table */
 			pt_add(as->as_pagetable, vpageaddr, entry);
 
-			//lock_release(swap_lock);
+			lock_release(swap_lock);
 		}
 
 		splx(spl);

@@ -9,6 +9,7 @@
 #include <coremap.h>
 #include <pagetable.h>
 #include <swap.h>
+#include <vm_features.h>
 
 /* coremap structure, an array allocated at runtime */
 struct coremap_entry *coremap;
@@ -23,9 +24,10 @@ static int last_avail_ppage = 0;
 static int prev_swap_page = 0;
 
 /* stores the index of the coremap entry the clock hand points at */
-int clock_hand;
+int clock_hand = 0;
+
 /* for now, the first time I enter the page evict func I set the clock_hand to the first user entry I find*/
-int first_page_evict = 0;
+//int first_page_evict = 0;
 
 /*
  * coremap_bootstrap()
@@ -70,7 +72,7 @@ void coremap_bootstrap()
         coremap[i].state = S_FREE; /* This memory is free */
         coremap[i].num_pages_allocated = 1;
         coremap[i].pt_entry = NULL;
-        coremap[i].referenced = 1;
+        coremap[i].referenced = 0;
     }
 
     /* save first and last pages */
@@ -230,79 +232,71 @@ void coremap_stat()
  * coremap_swap_pageout()
  * Implements random page table eviction...
  */
-struct pte *coremap_swap_pageout() {
+struct pte *coremap_swap_pageout() 
+{
     assert(curspl>0);
     int page_it;
 
-    #if !LRU_CLOCK
-    int start_page = ( random() % (last_avail_ppage - first_avail_ppage) ) + first_avail_ppage;
+    if(!LRU_CLOCK) 
+    {
+        int start_page = ( random() % (last_avail_ppage - first_avail_ppage) ) + first_avail_ppage;
 
-    for(page_it=start_page; page_it<last_avail_ppage; page_it++){
-        if(coremap[page_it].state == S_USER && page_it != prev_swap_page) {
-            assert(coremap[page_it].pt_entry != NULL);
-            prev_swap_page = page_it;
-            return coremap[page_it].pt_entry;
-        }
-    }
-
-    for(page_it=first_avail_ppage; page_it<start_page; page_it++){
-        if(coremap[page_it].state == S_USER && page_it != prev_swap_page) {
-            assert(coremap[page_it].pt_entry != NULL);
-            prev_swap_page = page_it;
-            return coremap[page_it].pt_entry;
-        }
-    }
-
-    return 0;
-
-    #endif
-
-    /* first page evicted - first time we set the hand iterator to point at a coremap entry */
-    if(!first_page_evict){
-        /* point at first entry in coremap if R 0 */
-        int page_it;
-        for( page_it = first_avail_ppage; page_it < last_avail_ppage; page_it++ ){
-            if(coremap[page_it].state == S_USER) {       
-               assert(coremap[page_it].pt_entry != NULL);
-                if((page_it + 1) == last_avail_ppage){
-                    /* found no proper page to evict */
-                    return NULL;
-                }
-                else {
-                    clock_hand = page_it;
-                }
-               coremap[page_it].referenced = 0;
-               first_page_evict++;
-               return coremap[page_it].pt_entry;
+        for(page_it=start_page; page_it<last_avail_ppage; page_it++){
+            if(coremap[page_it].state == S_USER && page_it != prev_swap_page) {
+                assert(coremap[page_it].pt_entry != NULL);
+                prev_swap_page = page_it;
+                return coremap[page_it].pt_entry;
             }
-        }  
-    }
+        }
 
-    int temp;
-    find_user:
-        while(coremap[clock_hand].referenced){
-            /* clear reference bit and increment clock hand until a page is replaced*/
-            coremap[clock_hand].referenced = 0;
-            if((clock_hand + 1) == last_avail_ppage){
-                clock_hand = first_avail_ppage;
-                continue;
+        for(page_it=first_avail_ppage; page_it<start_page; page_it++){
+            if(coremap[page_it].state == S_USER && page_it != prev_swap_page) {
+                assert(coremap[page_it].pt_entry != NULL);
+                prev_swap_page = page_it;
+                return coremap[page_it].pt_entry;
             }
-            clock_hand += 1;
         }
 
-        if(coremap[clock_hand].state != S_USER){
-            temp = clock_hand;
-            clock_hand = ((temp + 1) == last_avail_ppage) ? first_avail_ppage : (temp += 1);
-            goto find_user;
+        return 0;
+    }
+    else 
+    {
+        for(page_it=clock_hand+1; page_it<last_avail_ppage; page_it++) {
+            if(coremap[page_it].state == S_USER && coremap[page_it].referenced == 0) {
+                clock_hand = page_it; 
+                return coremap[page_it].pt_entry;
+            }
+            else if(coremap[page_it].state == S_USER && coremap[page_it].referenced == 1) {
+                coremap[page_it].referenced = 0;
+            }
         }
 
-    int old_clock_hand = clock_hand;
+        for(page_it=first_avail_ppage; page_it<last_avail_ppage; page_it++) {
+            if(coremap[page_it].state == S_USER && coremap[page_it].referenced == 0) {
+                clock_hand = page_it; 
+                return coremap[page_it].pt_entry;
+            }
+            else if(coremap[page_it].state == S_USER && coremap[page_it].referenced == 1) {
+                coremap[page_it].referenced = 0;
+            }
+        }
 
-    temp = clock_hand;
-    clock_hand = ((temp + 1) == last_avail_ppage) ? first_avail_ppage : (temp += 1);
-
-    return coremap[old_clock_hand].pt_entry;
+        return NULL;
+    }
 }
+
+void coremap_lruclock_update(paddr_t ppageaddr)
+{
+    u_int32_t index = (ppageaddr >> PAGE_OFFSET);
+    if(coremap[index].state != S_USER || coremap[index].pt_entry == NULL) {
+        panic("coremap corrupted, coremap_lruclock_update\n");
+    }
+    if(coremap[index].referenced == 0) {
+        coremap[index].referenced = 1; /* set the referenced bit */
+    }
+}
+
+
 
 /*
  * coremap_swap_createspace()

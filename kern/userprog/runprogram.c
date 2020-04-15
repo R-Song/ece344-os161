@@ -67,6 +67,7 @@ runprogram(char *progname, char **argv, unsigned long size_args)
 	result = as_define_stack(curthread->t_vmspace, &stackptr);
 	if (result) {
 		/* thread_exit destroys curthread->t_vmspace */
+		vfs_close(v);
 		return result;
 	}
     

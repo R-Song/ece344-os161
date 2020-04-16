@@ -372,6 +372,11 @@ int vm_writefault(struct addrspace *as, struct pte *faultentry, vaddr_t faultadd
 		return vm_stackfault(as, faultaddress);
 	}
 
+	/* In current stack region or heap region */
+	if( (is_pagefault) && (is_vaddrstack(as, faultpage) || is_vaddrheap(as, faultpage)) ) {
+		return vm_allocstackheap(as, faultaddress);
+	}
+
 	if(is_pagefault && !is_stack) {
 		if(LOAD_ON_DEMAND_ENABLE) {
 			return vm_lodfault(as, faultaddress, VM_FAULT_WRITE);
@@ -436,49 +441,75 @@ int vm_stackfault(struct addrspace *as, vaddr_t faultaddress)
 {
 	assert(lock_do_i_hold(swap_lock));
 
-	int idx, err;
+	int idx;
+	int err;
 	paddr_t faultpage_paddr;
 	struct pte *new_stack_entry;
-	vaddr_t vpageaddr;
+	//vaddr_t vpageaddr;
 	vaddr_t faultpage = (faultaddress & PAGE_FRAME);
 	int num_requested_pages = ((as->as_stackptr - faultpage) >> PAGE_OFFSET);
 
-	for(idx=0; idx<num_requested_pages; idx++) {
+	// for(idx=0; idx<num_requested_pages; idx++) {
 
-		vpageaddr = faultpage + PAGE_SIZE*idx;
+	// 	vpageaddr = faultpage + PAGE_SIZE*idx;
 
-		new_stack_entry = pte_init();
-		if(new_stack_entry == NULL) {
-			return ENOMEM;
-		}
+	// 	new_stack_entry = pte_init();
+	// 	if(new_stack_entry == NULL) {
+	// 		return ENOMEM;
+	// 	}
 
-		if(idx==0) {
-			/* For the fault page, we actually give it a physical page */
-			alloc_upage(new_stack_entry);
-			if(new_stack_entry->ppageaddr == 0) {
-				pte_destroy(new_stack_entry);
-				return ENOMEM;
-			}
-			faultpage_paddr = new_stack_entry->ppageaddr;
+	// 	if(idx==0) {
+	// 		/* For the fault page, we actually give it a physical page */
+	// 		alloc_upage(new_stack_entry);
+	// 		if(new_stack_entry->ppageaddr == 0) {
+	// 			pte_destroy(new_stack_entry);
+	// 			return ENOMEM;
+	// 		}
+	// 		faultpage_paddr = new_stack_entry->ppageaddr;
 			
-			/* entry->ppageaddr is updated by alloc_upage */
-			new_stack_entry->permissions = set_permissions(1, 1, 0);
-			new_stack_entry->swap_state = PTE_PRESENT;
-			new_stack_entry->swap_location = 0;
-		}
-		else {
-			/* for the others, we simply allocate swap storage */
-			err = swap_allocpage_od(new_stack_entry);
-			if(err) {
-				return err;
-			}
-			new_stack_entry->permissions = set_permissions(1, 1, 0);
-		}
+	// 		/* entry->ppageaddr is updated by alloc_upage */
+	// 		new_stack_entry->permissions = set_permissions(1, 1, 0);
+	// 		new_stack_entry->swap_state = PTE_PRESENT;
+	// 		new_stack_entry->swap_location = 0;
+	// 	}
+	// 	else {
+	// 		/* for the others, we simply allocate swap storage */
+	// 		err = swap_allocpage_od(new_stack_entry);
+	// 		if(err) {
+	// 			return err;
+	// 		}
+	// 		new_stack_entry->permissions = set_permissions(1, 1, 0);
+	// 	}
 
-		/* add entry to page table */
-		pt_add(as->as_pagetable, vpageaddr, new_stack_entry);
-	}	
+	// 	/* add entry to page table */
+	// 	pt_add(as->as_pagetable, vpageaddr, new_stack_entry);
+	// }	
 
+	new_stack_entry = pte_init();
+	if(new_stack_entry == NULL) {
+		return ENOMEM;
+	}
+	/* Give the faultaddress its entry */
+	alloc_upage(new_stack_entry);
+	if(new_stack_entry->ppageaddr == 0) {
+		pte_destroy(new_stack_entry);
+		return ENOMEM;
+	}
+
+	err = pt_add(as->as_pagetable, faultpage, new_stack_entry);
+	if(err) {
+		pte_destroy(new_stack_entry);
+		return ENOMEM;
+	}
+
+	faultpage_paddr = new_stack_entry->ppageaddr;
+	
+	/* entry->ppageaddr is updated by alloc_upage */
+	new_stack_entry->permissions = set_permissions(1, 1, 0);
+	new_stack_entry->swap_state = PTE_PRESENT;
+	new_stack_entry->swap_location = 0;
+
+	/* let vm_fault allocate the stack pages on demand */
 	as->as_stackptr -= PAGE_SIZE*num_requested_pages;
 	assert(as->as_stackptr == faultpage);
 
@@ -695,5 +726,45 @@ int vm_lodfault(struct addrspace *as, vaddr_t faultaddress, int faulttype)
 	return 0;	
 }
 
+/* Create and allocate page. This or calls onto stack or heap */
+int vm_allocstackheap(struct addrspace *as, vaddr_t faultaddress) 
+{
+	int idx;
+	int err;
+	vaddr_t faultpage = (faultaddress & PAGE_FRAME);
 
+	struct pte *new_entry = pte_init();
+	if(new_entry == NULL) {
+		return ENOMEM;
+	}
+
+	/* Give a physical page */
+	alloc_upage(new_entry);
+	if(new_entry->ppageaddr == 0) {
+		pte_destroy(new_entry);
+		return ENOMEM;
+	}
+
+	err = pt_add(as->as_pagetable, faultpage, new_entry);
+	if(err) {
+		pte_destroy(new_entry);
+		return ENOMEM;
+	}
+
+	/* entry->ppageaddr is updated by alloc_upage */
+	new_entry->permissions = set_permissions(1, 1, 0);
+	new_entry->swap_state = PTE_PRESENT;
+	new_entry->swap_location = 0;
+
+	/* Add to the TLB */
+	idx = TLB_Replace(faultpage, new_entry->ppageaddr);
+	TLB_WriteDirty(idx, 1);
+	TLB_WriteValid(idx, 1);
+
+	if(LRU_CLOCK) {
+		coremap_lruclock_update(new_entry->ppageaddr);
+	}
+	
+	return 0;
+}
 

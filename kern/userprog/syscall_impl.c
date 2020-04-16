@@ -489,6 +489,14 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 		return EINVAL;	
 	} 
 
+	/* Anything more than this is too large for one allocation */
+	if(amount > 8*8192) {
+		*retval = -1;
+		lock_release(swap_lock);
+		splx(spl);
+		return ENOMEM;
+	}
+
 	/* Check if we should be allocating or freeing memory */
 	if(amount == 0) 
 	{
@@ -499,6 +507,13 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 	}
 	else if(amount > 0) 
 	{
+		/* Let vm_fault allocate pages on demand */
+		// as->as_heapend += amount;
+		// *retval = old_heapend;
+		// lock_release(swap_lock);
+		// splx(spl);
+		// return 0;
+
 		/* Check to see if allocation requires a new page */
 		vaddr_t new_heapend = old_heapend + amount;
 		vaddr_t new_heapsize = ((new_heapend - heapstart + PAGE_SIZE-1) >> PAGE_OFFSET);
@@ -576,6 +591,10 @@ int sys_sbrk(intptr_t amount, pid_t *retval)
 			for(i=0; i<num_pages_dealloc; i++) {
 				vaddr = ((old_heapend - i*PAGE_SIZE) & PAGE_FRAME);
 				new_entry = pt_get(as->as_pagetable, vaddr);
+
+				if(new_entry == NULL) {
+					continue;
+				}
 
 				free_upage(new_entry);
 				pt_remove(as->as_pagetable, vaddr);

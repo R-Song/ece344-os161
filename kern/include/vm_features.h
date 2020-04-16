@@ -10,7 +10,7 @@
 
 #define COPY_ON_WRITE_ENABLE 1
 
-#define LRU_CLOCK 1
+#define LRU_CLOCK 0
 
 #define TLB_ASID_ENABLE 0
 

@@ -20,7 +20,10 @@
 #define SMALLSIZE   72
 #define MEDIUMSIZE  896
 #define BIGSIZE     16384
-#define HUGESIZE    (1024 * 1024 * 1024)
+//#define HUGESIZE    (1024 * 1024 * 1024)
+// (david): this test expects the first successful malloc to be possible,
+// so tone it down a little
+#define HUGESIZE    (1024 * 1024 * 3)
 
 /* Maximum amount of space per block we allow for indexing structures */
 #define OVERHEAD         32

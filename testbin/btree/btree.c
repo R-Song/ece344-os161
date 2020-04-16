@@ -16,8 +16,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* 1 MB array */
-#define SIZE (1024 * 1024)
+/* (david): 20 MB array (from 1MB) */
+#define SIZE (1024 * 1024 * 20)
 
 /* We'll copy in at least 32K of data into the btree */
 #define MIN (32 * 1024)

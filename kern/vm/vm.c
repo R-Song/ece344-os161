@@ -277,9 +277,9 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 			retval = EINVAL;
 	}
 
-	if(retval != 0) {
-		kprintf("Something is wrong in vm_fault\n");
-	}
+	// if(retval != 0) {
+	// 	kprintf("Something is wrong in vm_fault\n");
+	// }
 
 	lock_release(swap_lock);
 	splx(spl);
